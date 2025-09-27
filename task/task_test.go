@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	expect "github.com/yusing/godoxy/internal/utils/testing"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func testTask() *Task {

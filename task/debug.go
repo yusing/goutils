@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/rs/zerolog/log"
-	"github.com/yusing/godoxy/internal/gperr"
+	gperr "github.com/yusing/goutils/errs"
 )
 
 // debug only.
