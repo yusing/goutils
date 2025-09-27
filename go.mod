@@ -3,6 +3,7 @@ module github.com/yusing/goutils
 go 1.25.1
 
 require (
+	github.com/puzpuzpuz/xsync/v4 v4.2.0
 	github.com/quic-go/quic-go v0.54.1
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1

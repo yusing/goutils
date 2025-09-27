@@ -35,8 +35,8 @@ func TestBuilderIs(t *testing.T) {
 	eb.Add(context.Canceled)
 	eb.Add(io.ErrShortBuffer)
 	expect.True(t, eb.HasError())
-	expect.Error(t, io.ErrShortBuffer, eb.Error())
-	expect.Error(t, context.Canceled, eb.Error())
+	expect.ErrorIs(t, io.ErrShortBuffer, eb.Error())
+	expect.ErrorIs(t, context.Canceled, eb.Error())
 }
 
 func TestBuilderNested(t *testing.T) {
