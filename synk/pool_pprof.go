@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
-	"github.com/yusing/goutils/strutils"
+	strutils "github.com/yusing/goutils/strings"
 )
 
 type poolCounters struct {
