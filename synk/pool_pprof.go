@@ -1,4 +1,4 @@
-//go:build !pprof
+//go:build pprof
 
 package synk
 
