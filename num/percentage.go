@@ -63,7 +63,7 @@ func (p Percentage) String() string {
 }
 
 func (p Percentage) MarshalJSON() ([]byte, error) {
-	return fmt.Appendf(nil, `"%.1f"`, p.ToFloat()), nil
+	return fmt.Appendf(nil, `%.1f`, p.ToFloat()), nil
 }
 
 func (p *Percentage) UnmarshalJSON(data []byte) error {
