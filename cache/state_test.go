@@ -277,8 +277,10 @@ func TestCachedFuncState_ExpirationLogic(t *testing.T) {
 
 	state := &CachedFuncState[string]{
 		CachedFuncBuilder: CachedFuncBuilder[string]{
-			fn:  fn,
-			ttl: 100 * time.Millisecond,
+			CachedFuncConfig: CachedFuncConfig{
+				ttl: 100 * time.Millisecond,
+			},
+			fn: fn,
 		},
 	}
 
@@ -296,8 +298,7 @@ func TestCachedFuncState_ExpirationLogic(t *testing.T) {
 	// Test with zero TTL (should never expire)
 	stateZeroTTL := &CachedFuncState[string]{
 		CachedFuncBuilder: CachedFuncBuilder[string]{
-			fn:  fn,
-			ttl: 0,
+			fn: fn,
 		},
 	}
 	stateZeroTTL.setResult("test", nil)
