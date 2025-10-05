@@ -57,21 +57,23 @@ func (state *CachedFuncState[T]) callContext(ctx context.Context) (T, error) {
 	}
 
 	state.result, state.err = state.fn(ctx)
-	retries := state.retries
+	if state.err != nil {
+		retries := state.retries
 
-retriesLoop:
-	for retries > 0 {
-		select {
-		case <-ctx.Done():
-			return state.result, context.Cause(ctx)
-		default:
-			retries--
-			time.Sleep(state.backoff.NextBackOff())
+	retriesLoop:
+		for retries > 0 {
+			select {
+			case <-ctx.Done():
+				return state.result, context.Cause(ctx)
+			default:
+				retries--
+				time.Sleep(state.backoff.NextBackOff())
 
-			state.result, state.err = state.fn(ctx)
-			if state.err == nil {
-				state.backoff.Reset()
-				break retriesLoop
+				state.result, state.err = state.fn(ctx)
+				if state.err == nil {
+					state.backoff.Reset()
+					break retriesLoop
+				}
 			}
 		}
 	}
