@@ -26,20 +26,20 @@ type Builder struct {
 
 // NewBuilder creates a new Builder.
 //
-// If about is not provided, the Builder will not have a subject
+// If context is not provided, the Builder will not have a subject
 // and will expand when adding to another builder.
-func NewBuilder(about ...string) *Builder {
-	if len(about) == 0 {
+func NewBuilder(context ...string) *Builder {
+	if len(context) == 0 {
 		return &Builder{rwLock: noLock{}}
 	}
-	return &Builder{about: about[0], rwLock: noLock{}}
+	return &Builder{about: context[0], rwLock: noLock{}}
 }
 
-func NewBuilderWithConcurrency(about ...string) *Builder {
-	if len(about) == 0 {
+func NewBuilderWithConcurrency(context ...string) *Builder {
+	if len(context) == 0 {
 		return &Builder{rwLock: new(sync.RWMutex)}
 	}
-	return &Builder{about: about[0], rwLock: new(sync.RWMutex)}
+	return &Builder{about: context[0], rwLock: new(sync.RWMutex)}
 }
 
 func (b *Builder) EnableConcurrency() {
