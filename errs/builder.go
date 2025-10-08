@@ -5,45 +5,34 @@ import (
 	"sync"
 )
 
-type noLock struct{}
-
-func (noLock) Lock()    {}
-func (noLock) Unlock()  {}
-func (noLock) RLock()   {}
-func (noLock) RUnlock() {}
-
-type rwLock interface {
-	sync.Locker
-	RLock()
-	RUnlock()
-}
-
 type Builder struct {
 	about string
 	errs  []error
-	rwLock
+	mu    sync.RWMutex
+
+	concurrent bool
 }
 
 // NewBuilder creates a new Builder.
 //
 // If context is not provided, the Builder will not have a subject
 // and will expand when adding to another builder.
-func NewBuilder(context ...string) *Builder {
+func NewBuilder(context ...string) Builder {
 	if len(context) == 0 {
-		return &Builder{rwLock: noLock{}}
+		return Builder{}
 	}
-	return &Builder{about: context[0], rwLock: noLock{}}
+	return Builder{about: context[0]}
 }
 
-func NewBuilderWithConcurrency(context ...string) *Builder {
+func NewBuilderWithConcurrency(context ...string) Builder {
 	if len(context) == 0 {
-		return &Builder{rwLock: new(sync.RWMutex)}
+		return Builder{concurrent: true}
 	}
-	return &Builder{about: context[0], rwLock: new(sync.RWMutex)}
+	return Builder{about: context[0], concurrent: true}
 }
 
 func (b *Builder) EnableConcurrency() {
-	b.rwLock = new(sync.RWMutex)
+	b.concurrent = true
 }
 
 func (b *Builder) About() string {
@@ -51,11 +40,14 @@ func (b *Builder) About() string {
 }
 
 func (b *Builder) HasError() bool {
-	// no need to lock, when this is called, the Builder is not used anymore
+	b.RLock()
+	defer b.RUnlock()
 	return len(b.errs) > 0
 }
 
 func (b *Builder) Error() Error {
+	b.RLock()
+	defer b.RUnlock()
 	if len(b.errs) == 0 {
 		return nil
 	}
@@ -96,8 +88,8 @@ func (b *Builder) Adds(err string) {
 func (b *Builder) Addf(format string, args ...any) {
 	if len(args) > 0 {
 		b.Lock()
-		defer b.Unlock()
 		b.errs = append(b.errs, fmt.Errorf(format, args...))
+		b.Unlock()
 	} else {
 		b.Adds(format)
 	}
@@ -157,5 +149,28 @@ func (b *Builder) add(err error) {
 		b.add(&err.nestedError)
 	default:
 		b.errs = append(b.errs, err)
+	}
+}
+
+func (b *Builder) Lock() {
+	if b.concurrent {
+		b.mu.Lock()
+	}
+}
+
+func (b *Builder) Unlock() {
+	if b.concurrent {
+		b.mu.Unlock()
+	}
+}
+func (b *Builder) RLock() {
+	if b.concurrent {
+		b.mu.RLock()
+	}
+}
+
+func (b *Builder) RUnlock() {
+	if b.concurrent {
+		b.mu.RUnlock()
 	}
 }

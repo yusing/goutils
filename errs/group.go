@@ -9,7 +9,7 @@ type Group struct {
 
 func NewGroup(context string) *Group {
 	return &Group{
-		b: *NewBuilderWithConcurrency(context),
+		b: NewBuilderWithConcurrency(context),
 	}
 }
 
