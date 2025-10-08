@@ -1,12 +1,10 @@
 package synk
 
 import (
+	"encoding/json"
 	"sync/atomic"
-
-	"github.com/bytedance/sonic"
 )
 
-// TODO: moved to goutils
 type Value[T any] struct {
 	atomic.Value
 }
@@ -32,5 +30,5 @@ func (a *Value[T]) Swap(v T) T {
 }
 
 func (a *Value[T]) MarshalJSON() ([]byte, error) {
-	return sonic.Marshal(a.Load())
+	return json.Marshal(a.Load())
 }
