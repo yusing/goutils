@@ -23,6 +23,7 @@ type (
 	Callback struct {
 		fn    func()
 		about string
+		wait  bool // true for onFinish callbacks, false for onCancel callbacks
 	}
 	// Task controls objects' lifetime.
 	//
@@ -36,8 +37,7 @@ type (
 		cancel       context.CancelCauseFunc
 		done         chan struct{}
 		finishCalled bool
-		onCancel     *withWg[*Callback]
-		onFinish     *withWg[*Callback]
+		callbacks    *withWg[*Callback]
 		children     *withWg[*Task]
 
 		mu sync.Mutex
@@ -94,56 +94,51 @@ func (t *Task) FinishAndWait(reason any) {
 //
 // It should not be called after Finish is called.
 func (t *Task) OnFinished(about string, fn func()) {
-	if !t.needFinish() {
-		t.OnCancel(about, fn)
-		return
-	}
-
-	t.mu.Lock()
-	if t.onFinish == nil {
-		t.onFinish = newWithWg[*Callback]()
-		t.mu.Unlock()
-
-		go func() {
-			<-t.ctx.Done()
-			<-t.done
-			for cb := range t.onFinish.Range {
-				go func(cb *Callback) {
-					invokeWithRecover(cb)
-					t.onFinish.Delete(cb)
-				}(cb)
-			}
-		}()
-	} else {
-		t.mu.Unlock()
-	}
-
-	t.onFinish.Add(&Callback{fn: fn, about: about})
+	t.addCallback(about, fn, t.needFinish()) // when needFinish() is false, it's OnCancel
 }
 
 // OnCancel calls fn when the task is canceled.
 //
 // It should not be called after Finish is called.
 func (t *Task) OnCancel(about string, fn func()) {
+	t.addCallback(about, fn, false)
+}
+
+// addCallback adds a callback with the specified wait parameter.
+// It initializes the callbacks goroutine if needed.
+func (t *Task) addCallback(about string, fn func(), wait bool) {
 	t.mu.Lock()
-	if t.onCancel == nil {
-		t.onCancel = newWithWg[*Callback]()
+	if t.callbacks != nil {
+		t.mu.Unlock()
+	} else {
+		t.callbacks = newWithWg[*Callback]()
 		t.mu.Unlock()
 
-		go func() {
-			<-t.ctx.Done()
-			for cb := range t.onCancel.Range {
-				go func(cb *Callback) {
-					invokeWithRecover(cb)
-					t.onCancel.Delete(cb)
-				}(cb)
+		context.AfterFunc(t.ctx, func() {
+			// Execute non-waiting callbacks immediately when context is done
+			for cb := range t.callbacks.Range {
+				if !cb.wait { // Execute non-waiting callbacks (OnCancel)
+					go func(cb *Callback) {
+						invokeWithRecover(cb)
+						t.callbacks.Delete(cb)
+					}(cb)
+				}
 			}
-		}()
-	} else {
-		t.mu.Unlock()
+
+			// Wait for all subtasks to finish, then execute waiting callbacks
+			<-t.done
+			for cb := range t.callbacks.Range {
+				if cb.wait { // Execute waiting callbacks (OnFinished)
+					go func(cb *Callback) {
+						invokeWithRecover(cb)
+						t.callbacks.Delete(cb)
+					}(cb)
+				}
+			}
+		})
 	}
 
-	t.onCancel.Add(&Callback{fn: fn, about: about})
+	t.callbacks.Add(&Callback{fn: fn, about: about, wait: wait})
 }
 
 // Subtask returns a new subtask with the given name, derived from the parent's context.
@@ -171,10 +166,9 @@ func (t *Task) Subtask(name string, needFinish bool) *Task {
 		child.done = make(chan struct{})
 	} else {
 		child.done = closedCh
-		go func() {
-			<-child.ctx.Done()
-			child.Finish(t.FinishCause())
-		}()
+		context.AfterFunc(child.ctx, func() {
+			child.Finish(child.FinishCause())
+		})
 	}
 
 	logStarted(child)
@@ -208,7 +202,7 @@ func (t *Task) finish(reason any, wait bool) {
 }
 
 func (t *Task) waitFinish(timeout time.Duration) bool {
-	if t.children == nil && t.onCancel == nil && t.onFinish == nil {
+	if t.children == nil && t.callbacks == nil {
 		return true
 	}
 	done := make(chan struct{})
@@ -216,11 +210,8 @@ func (t *Task) waitFinish(timeout time.Duration) bool {
 		if t.children != nil {
 			t.children.Wait()
 		}
-		if t.onCancel != nil {
-			t.onCancel.Wait()
-		}
-		if t.onFinish != nil {
-			t.onFinish.Wait()
+		if t.callbacks != nil {
+			t.callbacks.Wait()
 		}
 		<-t.done
 		close(done)

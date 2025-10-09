@@ -10,13 +10,8 @@ import (
 // debug only.
 func listStuckedCallbacks(t *Task) []string {
 	callbacks := make([]string, 0)
-	if t.onFinish != nil {
-		for c := range t.onFinish.Range {
-			callbacks = append(callbacks, c.about)
-		}
-	}
-	if t.onCancel != nil {
-		for c := range t.onCancel.Range {
+	if t.callbacks != nil {
+		for c := range t.callbacks.Range {
 			callbacks = append(callbacks, c.about)
 		}
 	}
