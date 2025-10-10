@@ -37,8 +37,8 @@ type (
 		cancel       context.CancelCauseFunc
 		done         chan struct{}
 		finishCalled bool
-		callbacks    *withWg[*Callback]
-		children     *withWg[*Task]
+		callbacks    *Dependencies[*Callback]
+		children     *Dependencies[*Task]
 
 		mu sync.Mutex
 	}
@@ -111,7 +111,7 @@ func (t *Task) addCallback(about string, fn func(), wait bool) {
 	if t.callbacks != nil {
 		t.mu.Unlock()
 	} else {
-		t.callbacks = newWithWg[*Callback]()
+		t.callbacks = NewDependencies[*Callback]()
 		t.mu.Unlock()
 
 		context.AfterFunc(t.ctx, func() {
@@ -147,7 +147,7 @@ func (t *Task) addCallback(about string, fn func(), wait bool) {
 func (t *Task) Subtask(name string, needFinish bool) *Task {
 	t.mu.Lock()
 	if t.children == nil {
-		t.children = newWithWg[*Task]()
+		t.children = NewDependencies[*Task]()
 		t.mu.Unlock()
 	} else {
 		t.mu.Unlock()
@@ -187,14 +187,15 @@ func (t *Task) finish(reason any, wait bool) {
 	t.finishCalled = true
 	t.mu.Unlock()
 
-	if t.needFinish() {
-		close(t.done)
-	}
-
 	t.cancel(fmtCause(reason))
 	if wait && !t.waitFinish(taskTimeout) {
 		t.reportStucked()
 	}
+
+	if t.needFinish() {
+		close(t.done)
+	}
+
 	if t != root {
 		t.parent.children.Delete(t)
 	}
@@ -205,24 +206,24 @@ func (t *Task) waitFinish(timeout time.Duration) bool {
 	if t.children == nil && t.callbacks == nil {
 		return true
 	}
-	done := make(chan struct{})
-	go func() {
-		if t.children != nil {
-			t.children.Wait()
+
+	// NOTE: do not use t.ctx here
+	// when we reached here, t.ctx is already done
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if t.children != nil {
+		if err := t.children.Wait(ctx); err != nil {
+			return false
 		}
-		if t.callbacks != nil {
-			t.callbacks.Wait()
-		}
-		<-t.done
-		close(done)
-	}()
-	timeoutCh := time.After(timeout)
-	select {
-	case <-done:
-		return true
-	case <-timeoutCh:
-		return false
 	}
+	if t.callbacks != nil {
+		if err := t.callbacks.Wait(ctx); err != nil {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (t *Task) fullName() string {
