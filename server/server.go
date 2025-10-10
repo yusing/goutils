@@ -115,8 +115,10 @@ func NewServer(opt Options) (s *Server) {
 //
 // Start() is non-blocking.
 func (s *Server) Start(parent task.Parent, http3Enabled bool) {
+	taskName := func(proto string) string {
+		return "server." + s.Name + "." + proto
+	}
 	s.startTime = time.Now()
-	subtask := parent.Subtask("server."+s.Name, false)
 
 	if s.https != nil && http3Enabled {
 		if s.proxyProto {
@@ -129,6 +131,7 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) {
 				Handler:   s.https.Handler,
 				TLSConfig: http3.ConfigureTLSConfig(s.https.TLSConfig),
 			}
+			subtask := parent.Subtask(taskName("http3"), true)
 			Start(subtask, h3, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
 			if s.http != nil {
 				s.http.Handler = advertiseHTTP3(s.http.Handler, h3)
@@ -138,8 +141,8 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) {
 		}
 	}
 
-	Start(subtask, s.http, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
-	Start(subtask, s.https, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	Start(parent.Subtask(taskName("http"), true), s.http, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	Start(parent.Subtask(taskName("https"), true), s.https, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
 }
 
 type ServerStartOptions struct {
