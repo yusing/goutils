@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-var envPrefixes = []string{""}
+var envPrefixes = []string{"GODOXY_", "GOPROXY_", ""}
 
 func SetPrefixes(prefixes ...string) {
 	if len(prefixes) == 0 {
