@@ -237,7 +237,7 @@ func Start[Server httpServer](parent task.Parent, srv Server, optFns ...ServerSt
 			serveFunc = getServeFunc(l, srv.Serve)
 		}
 		task.OnCancel("stop", func() {
-			stop(srv, l, opts.logger)
+			stop(srv, l, proto, opts.logger)
 		})
 	case *http3.Server:
 		l, err := lc.ListenPacket(task.Context(), "udp", srv.Addr)
@@ -251,7 +251,7 @@ func Start[Server httpServer](parent task.Parent, srv Server, optFns ...ServerSt
 		}
 		serveFunc = getServeFunc(l, srv.Serve)
 		task.OnCancel("stop", func() {
-			stop(srv, l, opts.logger)
+			stop(srv, l, proto, opts.logger)
 		})
 	}
 	logStarted(srv, opts.logger)
@@ -265,12 +265,10 @@ func Start[Server httpServer](parent task.Parent, srv Server, optFns ...ServerSt
 	return port
 }
 
-func stop[Server httpServer](srv Server, l io.Closer, logger *zerolog.Logger) {
+func stop[Server httpServer](srv Server, l io.Closer, proto string, logger *zerolog.Logger) {
 	if srv == nil {
 		return
 	}
-
-	proto := proto(srv)
 
 	ctx, cancel := context.WithTimeout(task.RootContext(), 1*time.Second)
 	defer cancel()
