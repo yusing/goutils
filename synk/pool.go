@@ -140,7 +140,7 @@ func (p *BytesPool) GetSized(size int) []byte {
 			remainingSize := capB - size
 			if remainingSize == 0 {
 				addReused(capB)
-				return b
+				return b[:size]
 			}
 
 			if remainingSize > 0 { // capB > size (buffer larger than requested)
