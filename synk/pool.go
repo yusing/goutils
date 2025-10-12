@@ -85,9 +85,11 @@ func GetBytesPool() *BytesPool {
 }
 
 func GetBytesPoolWithUniqueMemory() *BytesPoolWithMemory {
-	return &BytesPoolWithMemory{
+	b := &BytesPoolWithMemory{
 		pool: bytesPoolWithMemory,
 	}
+	b.maxAllocatedSize.Store(UnsizedAvg)
+	return b
 }
 
 func (p *BytesPool) Get() []byte {
@@ -138,7 +140,7 @@ func (p *BytesPool) GetSized(size int) []byte {
 			remainingSize := capB - size
 			if remainingSize == 0 {
 				addReused(capB)
-				return b[:size]
+				return b
 			}
 
 			if remainingSize > 0 { // capB > size (buffer larger than requested)
@@ -147,7 +149,7 @@ func (p *BytesPool) GetSized(size int) []byte {
 				p.Put(b[size:capB])
 
 				// return the first part and limit the capacity to the requested size
-				ret := b[:size]
+				ret := b
 				setLen(&ret, size)
 				setCap(&ret, size)
 				return ret
