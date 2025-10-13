@@ -146,7 +146,9 @@ func (b *Builder) add(err error) {
 			b.errs = append(b.errs, err)
 		}
 	case *MultilineError:
-		b.add(&err.nestedError)
+		if err.currentParent != nil {
+			b.add(err.currentParent)
+		}
 	default:
 		b.errs = append(b.errs, err)
 	}

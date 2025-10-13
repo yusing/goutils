@@ -2,6 +2,7 @@ package gperr
 
 import (
 	"fmt"
+	"slices"
 )
 
 func newError(message string) error {
@@ -28,13 +29,11 @@ func Wrap(err error, message ...string) Error {
 		return wrap(err)
 	}
 	//nolint:errorlint
-	switch err := err.(type) {
+	switch err := wrap(err).(type) {
 	case *baseError:
-		err.Err = &wrappedError{err.Err, message[0]}
-		return err
+		return &baseError{&wrappedError{err.Err, message[0]}}
 	case *nestedError:
-		err.Err = &wrappedError{err.Err, message[0]}
-		return err
+		return &nestedError{Extras: slices.Clone(err.Extras), Err: &wrappedError{err.Err, message[0]}}
 	}
 	return &baseError{&wrappedError{err, message[0]}}
 }
