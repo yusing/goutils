@@ -20,6 +20,18 @@ func SetPrefixes(prefixes ...string) {
 	envPrefixes = prefixes
 }
 
+func LookupEnv(key string) (string, bool) {
+	var value string
+	var ok bool
+	for _, prefix := range envPrefixes {
+		value, ok = os.LookupEnv(prefix + key)
+		if ok && value != "" {
+			return value, true
+		}
+	}
+	return "", false
+}
+
 func GetEnv[T any](key string, defaultValue T, parser func(string) (T, error)) T {
 	var value string
 	var ok bool
