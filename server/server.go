@@ -188,7 +188,7 @@ func WithProxyProtocolSupport(value bool) ServerStartOption {
 	}
 }
 
-func Start[Server httpServer](parent task.Parent, srv Server, optFns ...ServerStartOption) (port int) {
+func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStartOption) (port int) {
 	if srv == nil {
 		return port
 	}
@@ -206,7 +206,6 @@ func Start[Server httpServer](parent task.Parent, srv Server, optFns ...ServerSt
 	}
 
 	proto := proto(srv)
-	task := parent.Subtask(proto, true)
 
 	var lc net.ListenConfig
 	var serveFunc func() error
@@ -214,7 +213,7 @@ func Start[Server httpServer](parent task.Parent, srv Server, optFns ...ServerSt
 	switch srv := any(srv).(type) {
 	case *http.Server:
 		srv.BaseContext = func(l net.Listener) context.Context {
-			return parent.Context()
+			return task.Context()
 		}
 		l, err := lc.Listen(task.Context(), "tcp", srv.Addr)
 		if err != nil {
