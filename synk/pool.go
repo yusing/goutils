@@ -1,6 +1,7 @@
 package synk
 
 import (
+	"bytes"
 	"sync/atomic"
 	"unsafe"
 	"weak"
@@ -109,6 +110,10 @@ func (p *BytesPool) Get() []byte {
 	}
 }
 
+func (p *BytesPool) GetBuffer() *bytes.Buffer {
+	return bytes.NewBuffer(p.Get())
+}
+
 func (p *BytesPoolWithMemory) Get() []byte {
 	for {
 		size := int(p.maxAllocatedSize.Load())
@@ -125,6 +130,10 @@ func (p *BytesPoolWithMemory) Get() []byte {
 			return make([]byte, 0, size)
 		}
 	}
+}
+
+func (p *BytesPoolWithMemory) GetBuffer() *bytes.Buffer {
+	return bytes.NewBuffer(p.Get())
 }
 
 func (p *BytesPool) GetSized(size int) []byte {
@@ -183,6 +192,12 @@ func (p *BytesPool) Put(b []byte) {
 	}
 }
 
+// PutBuffer resets and puts the buffer into the pool.
+func (p *BytesPool) PutBuffer(b *bytes.Buffer) {
+	b.Reset()
+	p.Put(b.Bytes())
+}
+
 func (p *BytesPoolWithMemory) Put(b []byte) {
 	capB := uint32(cap(b))
 
@@ -223,6 +238,12 @@ func (p *BytesPoolWithMemory) Put(b []byte) {
 		addDropped(int(capB))
 		// just drop it
 	}
+}
+
+// PutBuffer resets and puts the buffer into the pool.
+func (p *BytesPoolWithMemory) PutBuffer(b *bytes.Buffer) {
+	b.Reset()
+	p.Put(b.Bytes())
 }
 
 //go:inline
