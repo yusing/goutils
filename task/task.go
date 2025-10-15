@@ -188,12 +188,14 @@ func (t *Task) finish(reason any, wait bool) {
 	t.mu.Unlock()
 
 	t.cancel(fmtCause(reason))
-	if wait && !t.waitFinish(taskTimeout) {
-		t.reportStucked()
-	}
 
 	if t.needFinish() {
+		// close t.done so onFinish callbacks can be executed
 		close(t.done)
+	}
+
+	if wait && !t.waitFinish(taskTimeout) {
+		t.reportStucked()
 	}
 
 	if t != root {

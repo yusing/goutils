@@ -2,46 +2,69 @@ package task
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 
 	"github.com/puzpuzpuz/xsync/v4"
-	"golang.org/x/sync/semaphore"
 )
 
 type Dependencies[T comparable] struct {
 	m     *xsync.Map[T, struct{}]
-	sem   *semaphore.Weighted
 	count atomic.Int64
+	done  atomic.Pointer[chan struct{}]
 }
 
 func NewDependencies[T comparable]() *Dependencies[T] {
 	return &Dependencies[T]{
-		m:   xsync.NewMap[T, struct{}](xsync.WithGrowOnly()),
-		sem: semaphore.NewWeighted(1),
+		m: xsync.NewMap[T, struct{}](xsync.WithGrowOnly()),
 	}
 }
 
 func (w *Dependencies[T]) Add(ele T) {
 	w.m.Store(ele, struct{}{})
 	if w.count.Add(1) == 1 {
-		// First element, acquire the semaphore
-		w.sem.Acquire(context.Background(), 1)
+		// Create new channel to block Wait()
+		ch := make(chan struct{})
+		w.done.Store(&ch)
 	}
 }
 
-func (w *Dependencies[T]) Delete(key T) {
-	if _, exists := w.m.LoadAndDelete(key); exists {
+func (w *Dependencies[T]) Delete(ele T) {
+	if _, exists := w.m.LoadAndDelete(ele); exists {
 		if w.count.Add(-1) == 0 {
-			// Last element, release the semaphore
-			w.sem.Release(1)
+			// Close channel to unblock Wait()
+			done := w.done.Load()
+			if done != nil {
+				close(*done)
+			}
 		}
 	}
 }
 
 func (w *Dependencies[T]) Wait(ctx context.Context) error {
-	err := w.sem.Acquire(ctx, 1)
-	w.m.Clear()
-	return err
+	done := w.done.Load()
+	if done == nil {
+		if w.count.Load() != 0 {
+			return errors.New("bug: count != 0")
+		}
+		w.m.Clear()
+		return nil
+	}
+
+	select {
+	case <-*done:
+		w.m.Clear()
+		count := w.count.Load()
+		if count > 0 {
+			return errors.New("bug: new dependencies added after Wait")
+		}
+		if count < 0 {
+			return errors.New("bug: count < 0")
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (w *Dependencies[T]) Range(yield func(T) bool) {
