@@ -6,6 +6,7 @@ import (
 	"time"
 
 	gperr "github.com/yusing/goutils/errs"
+	"github.com/yusing/goutils/intern"
 )
 
 type (
@@ -32,7 +33,7 @@ type (
 	// Use Task.Finish to stop all subtasks of the Task.
 	Task struct {
 		parent       *Task
-		name         string
+		name         intern.Handle[string]
 		ctx          context.Context
 		cancel       context.CancelCauseFunc
 		done         chan struct{}
@@ -61,7 +62,7 @@ func (t *Task) Context() context.Context {
 }
 
 func (t *Task) Name() string {
-	return t.name
+	return t.name.Value()
 }
 
 // String returns the full name of the task.
@@ -154,7 +155,7 @@ func (t *Task) Subtask(name string, needFinish bool) *Task {
 	}
 
 	child := &Task{
-		name:   name,
+		name:   intern.Make(name),
 		parent: t,
 	}
 
@@ -230,9 +231,9 @@ func (t *Task) waitFinish(timeout time.Duration) bool {
 
 func (t *Task) fullName() string {
 	if t.parent == root {
-		return t.name
+		return t.name.Value()
 	}
-	return t.parent.fullName() + "." + t.name
+	return t.parent.fullName() + "." + t.name.Value()
 }
 
 func (t *Task) needFinish() bool {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rs/zerolog/log"
+	"github.com/yusing/goutils/intern"
 )
 
 var ErrProgramExiting = errors.New("program exiting")
@@ -26,7 +27,7 @@ func init() {
 func initRoot() {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	root = &Task{
-		name:   "root",
+		name:   intern.Make("root"),
 		ctx:    ctx,
 		cancel: cancel,
 		done:   closedCh,
