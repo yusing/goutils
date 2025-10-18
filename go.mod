@@ -1,6 +1,6 @@
 module github.com/yusing/goutils
 
-go 1.25.2
+go 1.25.3
 
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3

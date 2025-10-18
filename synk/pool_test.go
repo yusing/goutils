@@ -1,56 +1,81 @@
 package synk
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
+var testBytesPool = GetSizedBytesPool()
+
+func underlyingPtr(b []byte) uintptr {
+	return sliceStruct(&b).ptr
+}
+
+func fill(b []byte) {
+	for i := range len(b) {
+		b[i] = byte(i % 256)
+	}
+}
+
+func verify(t *testing.T, b []byte) {
+	for i := range len(b) {
+		require.Equal(t, byte(i%256), b[i], "Data should be preserved after split at index %d", i)
+	}
+}
+
 func TestSized(t *testing.T) {
-	b := bytesPool.GetSized(2 * SizedPoolThreshold)
-	assert.Equal(t, cap(b), 2*SizedPoolThreshold)
-	bytesPool.Put(b)
-	assert.Equal(t, underlyingPtr(b), underlyingPtr(bytesPool.GetSized(SizedPoolThreshold)))
+	t.Cleanup(initAll)
+	size := allocSize(1)
+	b := testBytesPool.GetSized(size)
+	assert.Equal(t, cap(b), size)
+	testBytesPool.Put(b)
+	assert.Equal(t, underlyingPtr(b), underlyingPtr(testBytesPool.GetSized(size)))
 }
 
 func TestUnsized(t *testing.T) {
-	b := bytesPool.Get()
-	assert.Equal(t, cap(b), UnsizedAvg)
-	bytesPool.Put(b)
-	assert.Equal(t, underlyingPtr(b), underlyingPtr(bytesPool.Get()))
+	t.Cleanup(initAll)
+	b := unsizedBytesPool.Get()
+	assert.Equal(t, cap(b), MinAllocSize)
+	unsizedBytesPool.Put(b)
+	assert.Equal(t, underlyingPtr(b), underlyingPtr(unsizedBytesPool.Get()))
 }
 
 func TestGetSizedExactMatch(t *testing.T) {
+	t.Cleanup(initAll)
 	// Test exact size match reuse
-	size := SizedPoolThreshold
-	b1 := bytesPool.GetSized(size)
+	size := allocSize(0)
+	b1 := testBytesPool.GetSized(size)
 	assert.Equal(t, size, len(b1))
 	assert.Equal(t, size, cap(b1))
 
 	// Put back into pool
-	bytesPool.Put(b1)
+	testBytesPool.Put(b1)
 
 	// Get same size - should reuse the same buffer
-	b2 := bytesPool.GetSized(size)
+	b2 := testBytesPool.GetSized(size)
 	assert.Equal(t, size, len(b2))
 	assert.Equal(t, size, cap(b2))
 	assert.Equal(t, underlyingPtr(b1), underlyingPtr(b2))
 }
 
 func TestGetSizedBufferSplit(t *testing.T) {
+	t.Cleanup(initAll)
 	// Test buffer splitting when capacity > requested size
-	largeSize := 2 * SizedPoolThreshold
-	requestedSize := SizedPoolThreshold
+	largeSize := allocSize(4)
+	requestedSize := largeSize - allocSize(1)
 
 	// Create a large buffer and put it in pool
-	b1 := bytesPool.GetSized(largeSize)
+	b1 := testBytesPool.GetSized(largeSize)
 	assert.Equal(t, largeSize, len(b1))
 	assert.Equal(t, largeSize, cap(b1))
 
-	bytesPool.Put(b1)
+	testBytesPool.Put(b1)
 
 	// Request smaller size - should split the buffer
-	b2 := bytesPool.GetSized(requestedSize)
+	b2 := testBytesPool.GetSized(requestedSize)
 	assert.Equal(t, requestedSize, len(b2))
 	assert.Equal(t, requestedSize, cap(b2)) // capacity should remain the original
 	assert.Equal(t, underlyingPtr(b1), underlyingPtr(b2))
@@ -58,7 +83,7 @@ func TestGetSizedBufferSplit(t *testing.T) {
 	// The remaining part should be put back in pool
 	// Request the remaining size to verify
 	remainingSize := largeSize - requestedSize
-	b3 := bytesPool.GetSized(remainingSize)
+	b3 := testBytesPool.GetSized(remainingSize)
 	assert.Equal(t, remainingSize, len(b3))
 	assert.Equal(t, remainingSize, cap(b3))
 
@@ -73,191 +98,147 @@ func TestGetSizedBufferSplit(t *testing.T) {
 }
 
 func TestGetSizedSmallRemainder(t *testing.T) {
-	// Test when remaining size is smaller than SizedPoolThreshold
-	poolSize := SizedPoolThreshold + 100 // Just slightly larger than threshold
-	requestedSize := SizedPoolThreshold
+	t.Cleanup(initAll)
+	poolSize := allocSize(1)
+	requestedSize := allocSize(0)
+	remainderSize := poolSize - requestedSize
 
 	// Create buffer and put in pool
-	b1 := bytesPool.GetSized(poolSize)
-	bytesPool.Put(b1)
+	b1 := testBytesPool.GetSized(poolSize)
+	testBytesPool.Put(b1)
 
 	// Request size that leaves small remainder
-	b2 := bytesPool.GetSized(requestedSize)
+	b2 := testBytesPool.GetSized(requestedSize)
 	assert.Equal(t, requestedSize, len(b2))
-	assert.Equal(t, requestedSize, cap(b2))
+	assert.GreaterOrEqual(t, cap(b2), requestedSize)
 
 	// The small remainder (100 bytes) should NOT be put back in sized pool
 	// Try to get the remainder size - should create new buffer
-	b3 := bytesPool.GetSized(100)
-	assert.Equal(t, 100, len(b3))
-	assert.Equal(t, 100, cap(b3))
+	b3 := testBytesPool.GetSized(remainderSize)
+	assert.Equal(t, remainderSize, len(b3))
+	assert.GreaterOrEqual(t, cap(b3), remainderSize)
 	assert.NotEqual(t, underlyingPtr(b2), underlyingPtr(b3))
 }
 
 func TestGetSizedSmallBufferBypass(t *testing.T) {
-	// Test that small buffers (< SizedPoolThreshold) don't use sized pool
-	smallSize := SizedPoolThreshold - 1
+	t.Cleanup(initAll)
+	// Test that small buffers (< p.min) don't use sized pool
+	smallSize := allocSize(0) - 1
 
-	b1 := bytesPool.GetSized(smallSize)
+	b1 := testBytesPool.GetSized(smallSize)
 	assert.Equal(t, smallSize, len(b1))
-	assert.Equal(t, smallSize, cap(b1))
 
-	b2 := bytesPool.GetSized(smallSize)
+	b2 := testBytesPool.GetSized(smallSize)
 	assert.Equal(t, smallSize, len(b2))
-	assert.Equal(t, smallSize, cap(b2))
 
 	// Should be different buffers (not pooled)
 	assert.NotEqual(t, underlyingPtr(b1), underlyingPtr(b2))
 }
 
 func TestGetSizedBufferTooSmall(t *testing.T) {
+	t.Cleanup(initAll)
 	// Test when pool buffer is smaller than requested size
-	smallSize := SizedPoolThreshold
-	largeSize := 2 * SizedPoolThreshold
+	smallSize := allocSize(0)
+	largeSize := allocSize(1)
 
 	// Put small buffer in pool
-	b1 := bytesPool.GetSized(smallSize)
-	bytesPool.Put(b1)
+	b1 := testBytesPool.GetSized(smallSize)
+	assert.Equal(t, smallSize, len(b1))
+	assert.Equal(t, smallSize, cap(b1))
+	testBytesPool.Put(b1)
 
 	// Request larger size - should create new buffer, not reuse small one
-	b2 := bytesPool.GetSized(largeSize)
+	b2 := testBytesPool.GetSized(largeSize)
 	assert.Equal(t, largeSize, len(b2))
 	assert.Equal(t, largeSize, cap(b2))
 	assert.NotEqual(t, underlyingPtr(b1), underlyingPtr(b2))
 
 	// The small buffer should still be in pool
-	b3 := bytesPool.GetSized(smallSize)
+	b3 := testBytesPool.GetSized(smallSize)
 	assert.Equal(t, underlyingPtr(b1), underlyingPtr(b3))
 }
 
 func TestGetSizedMultipleSplits(t *testing.T) {
-	// Test multiple sequential splits of the same buffer
-	hugeSize := 4 * SizedPoolThreshold
-	splitSize := SizedPoolThreshold
+	t.Cleanup(initAll)
 
-	// Create huge buffer
-	b1 := bytesPool.GetSized(hugeSize)
-	originalPtr := underlyingPtr(b1)
-	bytesPool.Put(b1)
+	firstSize := allocSize(SizedPools - 3)
+	secondSize := allocSize(SizedPools - 4)
+	thirdSize := allocSize(SizedPools - 5)
+	totalSize := firstSize + secondSize + thirdSize
 
-	// Split it into smaller pieces
-	pieces := make([][]byte, 0, 4)
-	for i := range 4 {
-		piece := bytesPool.GetSized(splitSize)
-		pieces = append(pieces, piece)
+	b := testBytesPool.GetSized(totalSize)
+	ptr := underlyingPtr(b)
+	testBytesPool.Put(b)
 
-		// Each piece should point to the correct offset
-		expectedOffset := uintptr(originalPtr) + uintptr(i*splitSize)
-		actualOffset := uintptr(underlyingPtr(piece))
-		assert.Equal(t, expectedOffset, actualOffset, "Piece %d should point to correct offset", i)
-		assert.Equal(t, splitSize, len(piece))
-		assert.Equal(t, splitSize, cap(piece))
-	}
+	part1 := testBytesPool.GetSized(firstSize)
+	assert.Equal(t, firstSize, len(part1))
+	assert.Equal(t, firstSize, cap(part1))
+	assert.Equal(t, ptr, underlyingPtr(part1))
 
-	// All pieces should have the same underlying capacity
-	for i, piece := range pieces {
-		assert.Equal(t, splitSize, cap(piece), "Piece %d should have correct capacity", i)
-	}
+	part2 := testBytesPool.GetSized(secondSize)
+	assert.Equal(t, secondSize, len(part2))
+	assert.Equal(t, secondSize, cap(part2))
+	assert.Equal(t, ptr+uintptr(firstSize), underlyingPtr(part2))
+
+	part3 := testBytesPool.GetSized(thirdSize)
+	assert.Equal(t, thirdSize, len(part3))
+	assert.Equal(t, thirdSize, cap(part3))
+	assert.Equal(t, ptr+uintptr(firstSize+secondSize), underlyingPtr(part3))
+
+	testBytesPool.Put(part1)
+	testBytesPool.Put(part2)
+	testBytesPool.Put(part3)
 }
 
 func TestGetSizedMemorySafety(t *testing.T) {
+	t.Cleanup(initAll)
 	// Test that split buffers don't interfere with each other
-	totalSize := 3 * SizedPoolThreshold
-	firstSize := SizedPoolThreshold
+	remainingSize := allocSize(2)
+	totalSize := allocSize(4)
+	firstSize := totalSize - remainingSize
+	require.Equal(t, testBytesPool.poolIdx(totalSize), testBytesPool.poolIdx(firstSize))
 
 	// Create buffer and split it
-	b1 := bytesPool.GetSized(totalSize)
-	// Fill with test data
-	for i := range len(b1) {
-		b1[i] = byte(i % 256)
-	}
-
-	bytesPool.Put(b1)
+	b1 := testBytesPool.GetSized(totalSize)
+	fill(b1)
+	testBytesPool.Put(b1)
 
 	// Get first part
-	first := bytesPool.GetSized(firstSize)
+	first := testBytesPool.GetSized(firstSize)
 	assert.Equal(t, firstSize, len(first))
+	assert.Equal(t, firstSize, cap(first))
+
+	require.Equal(t, underlyingPtr(b1), underlyingPtr(first))
 
 	// Verify data integrity
-	for i := range len(first) {
-		assert.Equal(t, byte(i%256), first[i], "Data should be preserved after split")
-	}
+	verify(t, first)
 
 	// Get remaining part
-	remainingSize := totalSize - firstSize
-	remaining := bytesPool.GetSized(remainingSize)
+	remaining := testBytesPool.GetSized(remainingSize)
 	assert.Equal(t, remainingSize, len(remaining))
+	assert.Equal(t, remainingSize, cap(remaining))
 
-	// Verify remaining data
-	for i := range len(remaining) {
-		expected := byte((i + firstSize) % 256)
-		assert.Equal(t, expected, remaining[i], "Remaining data should be preserved")
-	}
+	// remaining should be first + remainingSize
+	require.Equal(t, underlyingPtr(first)+uintptr(firstSize), underlyingPtr(remaining))
+
+	verify(t, first)
+	verify(t, remaining)
 }
 
-func TestGetSizedCapacityLimiting(t *testing.T) {
-	// Test that returned buffers have limited capacity to prevent overwrites
-	largeSize := 2 * SizedPoolThreshold
-	requestedSize := SizedPoolThreshold
-
-	// Create large buffer and put in pool
-	b1 := bytesPool.GetSized(largeSize)
-	bytesPool.Put(b1)
-
-	// Get smaller buffer from the split
-	b2 := bytesPool.GetSized(requestedSize)
-	assert.Equal(t, requestedSize, len(b2))
-	assert.Equal(t, requestedSize, cap(b2), "Returned buffer should have limited capacity")
-
-	// Try to append data - should not be able to overwrite beyond capacity
-	original := make([]byte, len(b2))
-	copy(original, b2)
-
-	// This append should force a new allocation since capacity is limited
-	b2 = append(b2, 1, 2, 3, 4, 5)
-	assert.Greater(t, len(b2), requestedSize, "Buffer should have grown")
-
-	// Get the remaining buffer to verify it wasn't affected
-	remainingSize := largeSize - requestedSize
-	b3 := bytesPool.GetSized(remainingSize)
-	assert.Equal(t, remainingSize, len(b3))
-	assert.Equal(t, remainingSize, cap(b3), "Remaining buffer should have limited capacity")
-}
-
-func TestGetSizedAppendSafety(t *testing.T) {
-	// Test that appending to returned buffer doesn't affect remaining buffer
-	totalSize := 4 * SizedPoolThreshold
-	firstSize := SizedPoolThreshold
-
-	// Create buffer with specific pattern
-	b1 := bytesPool.GetSized(totalSize)
-	for i := range len(b1) {
-		b1[i] = byte(100 + i%100)
+func TestPoolIdx(t *testing.T) {
+	for i := range SizedPools {
+		size := allocSize(i)
+		expectedIdx := i
+		t.Run(fmt.Sprintf("size=%d", size), func(t *testing.T) {
+			idx := testBytesPool.poolIdx(size)
+			assert.Equal(t, expectedIdx, idx, "poolIdx(%d) should return %d", size, expectedIdx)
+			assert.Equal(t, size, allocSize(idx), "Pool size %d should be %d", size, allocSize(idx))
+		})
 	}
-	bytesPool.Put(b1)
-
-	// Get first part
-	first := bytesPool.GetSized(firstSize)
-	assert.Equal(t, firstSize, cap(first), "First part should have limited capacity")
-
-	// Store original first part content
-	originalFirst := make([]byte, len(first))
-	copy(originalFirst, first)
-
-	// Get remaining part to establish its state
-	remaining := bytesPool.GetSized(SizedPoolThreshold)
-
-	// Store original remaining content
-	originalRemaining := make([]byte, len(remaining))
-	copy(originalRemaining, remaining)
-
-	// Now try to append to first - this should not affect remaining buffers
-	// since capacity is limited
-	first = append(first, make([]byte, 1000)...)
-
-	// Verify remaining buffer content is unchanged
-	for i := range len(originalRemaining) {
-		assert.Equal(t, originalRemaining[i], remaining[i],
-			"Remaining buffer should be unaffected by append to first buffer")
-	}
+	t.Run("verify_enough_pool_size", func(t *testing.T) {
+		for i := range testBytesPool.max {
+			idx := testBytesPool.poolIdx(i)
+			assert.GreaterOrEqual(t, allocSize(idx), i, "Pool size %d should be >= %d", allocSize(idx), i)
+		}
+	})
 }

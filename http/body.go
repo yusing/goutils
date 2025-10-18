@@ -7,21 +7,26 @@ import (
 	"github.com/yusing/goutils/synk"
 )
 
-var bytesPool = synk.GetBytesPoolWithUniqueMemory()
-
-func noopRelease([]byte) {}
+var bytesPool = synk.GetSizedBytesPool()
+var unsizedPool = synk.GetUnsizedBytesPool()
 
 // ReadAllBody reads the body of the response into a buffer and returns it and a function to release the buffer.
+// If the response has a content length, it will be read into a sized buffer.
+// Otherwise, it will be read into an unsized buffer.
+// If error is not nil, the buffer will be released and release will be nil.
 func ReadAllBody(resp *http.Response) (b []byte, release func([]byte), err error) {
-	if resp.ContentLength > 0 && resp.ContentLength < synk.UnsizedAvg {
-		b = make([]byte, resp.ContentLength)
+	if resp.ContentLength > 0 {
+		b = bytesPool.GetSized(int(resp.ContentLength))
 		_, err = io.ReadFull(resp.Body, b)
-		return b, noopRelease, err
-	} else {
-		b = bytesPool.Get()
-		release = bytesPool.Put
+		if err != nil {
+			bytesPool.Put(b)
+			return nil, nil, err
+		}
+		return b, bytesPool.Put, nil
 	}
 
+	b = unsizedPool.Get()
+	release = unsizedPool.Put
 	var totalRead int64
 	// copied from io.ReadAll
 	// Copyright 2009 The Go Authors. All rights reserved.

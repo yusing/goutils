@@ -18,9 +18,10 @@ type poolCounters struct {
 }
 
 var (
-	nonPooled poolCounters
-	dropped   poolCounters
-	reused    poolCounters
+	nonPooled       poolCounters
+	dropped         poolCounters
+	reused          poolCounters
+	reusedRemaining poolCounters
 )
 
 func addNonPooled(size int) {
@@ -37,6 +38,11 @@ func addDropped(size int) {
 	dropped.size.Add(uint64(size))
 }
 
+func addReusedRemaining(b []byte) {
+	reusedRemaining.num.Add(1)
+	reusedRemaining.size.Add(uint64(len(b)))
+}
+
 func initPoolStats() {
 	go func() {
 		statsTicker := time.NewTicker(5 * time.Second)
@@ -50,15 +56,21 @@ func initPoolStats() {
 			case <-sig:
 				return
 			case <-statsTicker.C:
-				log.Info().
-					Uint64("numReused", reused.num.Load()).
-					Str("sizeReused", strutils.FormatByteSize(reused.size.Load())).
-					Uint64("numDropped", dropped.num.Load()).
-					Str("sizeDropped", strutils.FormatByteSize(dropped.size.Load())).
-					Uint64("numNonPooled", nonPooled.num.Load()).
-					Str("sizeNonPooled", strutils.FormatByteSize(nonPooled.size.Load())).
-					Msg("bytes pool stats")
+				printPoolStats()
 			}
 		}
 	}()
+}
+
+func printPoolStats() {
+	log.Info().
+		Uint64("numReused", reused.num.Load()).
+		Str("sizeReused", strutils.FormatByteSize(reused.size.Load())).
+		Uint64("numDropped", dropped.num.Load()).
+		Str("sizeDropped", strutils.FormatByteSize(dropped.size.Load())).
+		Uint64("numNonPooled", nonPooled.num.Load()).
+		Str("sizeNonPooled", strutils.FormatByteSize(nonPooled.size.Load())).
+		Uint64("numReusedRemaining", reusedRemaining.num.Load()).
+		Str("sizeReusedRemaining", strutils.FormatByteSize(reusedRemaining.size.Load())).
+		Msg("bytes pool stats")
 }

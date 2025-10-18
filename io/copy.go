@@ -9,16 +9,14 @@ import (
 	"github.com/yusing/goutils/synk"
 )
 
-const copyBufSize = synk.SizedPoolThreshold
-
-var bytesPool = synk.GetBytesPool()
+var bytesPool = synk.GetSizedBytesPool()
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // This is a copy of io.Copy with context and HTTP flusher handling
 // Author: yusing <yusing@6uo.me>.
 func CopyClose(dst *ContextWriter, src *ContextReader, sizeHint int) (err error) {
-	size := copyBufSize
+	size := 16384
 	if l, ok := src.Reader.(*io.LimitedReader); ok {
 		if int64(size) > l.N {
 			if l.N < 1 {
@@ -28,8 +26,9 @@ func CopyClose(dst *ContextWriter, src *ContextReader, sizeHint int) (err error)
 			}
 		}
 	} else if sizeHint > 0 {
-		size = min(size, sizeHint)
+		size = sizeHint
 	}
+
 	buf := bytesPool.GetSized(size)
 	defer bytesPool.Put(buf)
 	// close both as soon as one of them is done

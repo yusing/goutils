@@ -1,69 +1,138 @@
 package synk
 
 import (
+	"crypto/rand"
+	"fmt"
 	"slices"
 	"testing"
+	"unsafe"
 )
 
-var sizes = []int{1024, 4096, 16384, 65536, 32 * 1024, 128 * 1024, 512 * 1024, 1024 * 1024, 2 * 1024 * 1024}
+var sink []byte
 
-func BenchmarkBytesPool_GetSmall(b *testing.B) {
-	for b.Loop() {
-		bytesPool.Put(bytesPool.GetSized(1024))
+func escape(b []byte) {
+	sink = b
+}
+
+func BenchmarkBytesPool_Get(b *testing.B) {
+	var sizes = make([]int, 0, SizedPools)
+	for i := range SizedPools {
+		sizes = append(sizes, allocSize(i))
+	}
+
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("size-%d", size), func(b *testing.B) {
+			b.Run("unsized", func(b *testing.B) {
+				b.Cleanup(initAll)
+				for b.Loop() {
+					buf := slices.Grow(unsizedBytesPool.Get(), size)
+					escape(buf)
+					unsizedBytesPool.Put(buf)
+				}
+			})
+			b.Run("sized", func(b *testing.B) {
+				b.Cleanup(initAll)
+				bytesPoolWithMemory := GetSizedBytesPool()
+				for b.Loop() {
+					buf := bytesPoolWithMemory.GetSized(size)
+					escape(buf)
+					bytesPoolWithMemory.Put(buf)
+				}
+			})
+			b.Run("make", func(b *testing.B) {
+				for b.Loop() {
+					buf := make([]byte, size)
+					escape(buf)
+				}
+			})
+		})
 	}
 }
 
-func BenchmarkBytesPool_MakeSmall(b *testing.B) {
-	for b.Loop() {
-		_ = make([]byte, 1024)
-	}
-}
-
-func BenchmarkBytesPool_GetLarge(b *testing.B) {
-	for b.Loop() {
-		buf := bytesPool.GetSized(DropThreshold / 2)
-		buf[0] = 1
-		bytesPool.Put(buf)
-	}
-}
-
-func BenchmarkBytesPool_GetLargeUnsized(b *testing.B) {
-	for b.Loop() {
-		buf := slices.Grow(bytesPool.Get(), DropThreshold/2)
-		buf = append(buf, 1)
-		bytesPool.Put(buf)
-	}
-}
-
-func BenchmarkBytesPool_MakeLarge(b *testing.B) {
-	for b.Loop() {
-		buf := make([]byte, DropThreshold/2)
-		buf[0] = 1
-		_ = buf
-	}
+func psrng(n int) int {
+	var b [32]byte
+	rand.Read(b[:])
+	return int(*(*uint32)(unsafe.Pointer(&b)) % uint32(n))
 }
 
 func BenchmarkBytesPool_GetAll(b *testing.B) {
-	for i := range b.N {
-		bytesPool.Put(bytesPool.GetSized(sizes[i%len(sizes)]))
+	sizes := make([]int, 1000)
+	for i := range sizes {
+		sizes[i] = 1 + psrng(sizedBytesPool.max-1)
 	}
+
+	b.Logf("sizes: %v", sizes)
+
+	b.Run("unsized", func(b *testing.B) {
+		b.Cleanup(initAll)
+		i := 0
+		for b.Loop() {
+			buf := slices.Grow(unsizedBytesPool.Get(), sizes[i%len(sizes)])
+			escape(buf)
+			unsizedBytesPool.Put(buf)
+			i++
+		}
+	})
+	b.Run("sized", func(b *testing.B) {
+		b.Cleanup(initAll)
+		bytesPoolWithMemory := GetSizedBytesPool()
+		i := 0
+		for b.Loop() {
+			buf := bytesPoolWithMemory.GetSized(sizes[i%len(sizes)])
+			escape(buf)
+			bytesPoolWithMemory.Put(buf)
+			i++
+		}
+	})
+	b.Run("make", func(b *testing.B) {
+		i := 0
+		for b.Loop() {
+			buf := make([]byte, sizes[i%len(sizes)])
+			escape(buf)
+			i++
+		}
+	})
+
+	printPoolStats()
 }
 
-func BenchmarkBytesPool_GetAllUnsized(b *testing.B) {
-	for i := range b.N {
-		bytesPool.Put(slices.Grow(bytesPool.Get(), sizes[i%len(sizes)]))
+func BenchmarkBytesPool_GetAllExceedsMax(b *testing.B) {
+	sizes := make([]int, 1000)
+	for i := range sizes {
+		sizes[i] = 1 + psrng(sizedBytesPool.max*2)
 	}
-}
 
-func BenchmarkBytesPool_MakeAll(b *testing.B) {
-	for i := range b.N {
-		_ = make([]byte, sizes[i%len(sizes)])
-	}
-}
+	b.Logf("sizes: %v", sizes)
 
-func BenchmarkBytesPoolWithMemory(b *testing.B) {
-	pool := GetBytesPoolWithUniqueMemory()
-	for i := range b.N {
-		pool.Put(slices.Grow(pool.Get(), sizes[i%len(sizes)]))
-	}
+	b.Run("unsized", func(b *testing.B) {
+		b.Cleanup(initAll)
+		i := 0
+		for b.Loop() {
+			buf := slices.Grow(unsizedBytesPool.Get(), sizes[i%len(sizes)])
+			escape(buf)
+			unsizedBytesPool.Put(buf)
+			i++
+		}
+	})
+	b.Run("sized", func(b *testing.B) {
+		b.Cleanup(initAll)
+		bytesPoolWithMemory := GetSizedBytesPool()
+		i := 0
+		for b.Loop() {
+			buf := bytesPoolWithMemory.GetSized(sizes[i%len(sizes)])
+			escape(buf)
+			bytesPoolWithMemory.Put(buf)
+			i++
+		}
+	})
+	b.Run("make", func(b *testing.B) {
+		i := 0
+		for b.Loop() {
+			buf := make([]byte, sizes[i%len(sizes)])
+			escape(buf)
+			i++
+		}
+	})
+
+	printPoolStats()
 }
