@@ -186,8 +186,16 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 
 	capacity := allocSize(targetIdx)
 	addNonPooled(capacity)
+	// Allocate a buffer with the exact pool capacity to ensure it's returned
+	// to the correct pool (targetIdx) when released, avoiding misplacement
+	// in a smaller pool.
 	buf := make([]byte, capacity)
-	return buf[:size]
+	if capacity > size {
+		front := buf[:size:size]
+		storeFullCap(front, capacity)
+		return front
+	}
+	return buf
 }
 
 //go:inline
