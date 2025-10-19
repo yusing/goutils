@@ -66,6 +66,10 @@ func initAll() {
 		sizedBytesPool.pools[i] = make(chan weakBuf, poolChannelSize(i))
 	}
 	sizedBytesPool.largePool = make(chan weakBuf, LargePoolChannelSize)
+
+	// Initialize sync pool version
+	initSizedBytesPoolSync()
+
 	initPoolStats()
 }
 
