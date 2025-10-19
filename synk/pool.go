@@ -113,14 +113,6 @@ func (p UnsizedBytesPool) Get() []byte {
 	}
 }
 
-// poolIdx returns the index of the pool that guarantees the pool size is greater than or equal to the given size.
-func (p *SizedBytesPool) poolIdx(size int) int {
-	if size <= 0 {
-		return 0
-	}
-	return min(SizedPools-1, max(0, bits.Len(uint(size-1))-11))
-}
-
 // GetSized returns a slice of the given size.
 // If the size is 0, the returned slice is from the unsized pool.
 // Calling append to returned slice will cause undefined behavior.
@@ -157,7 +149,7 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 		}
 	}
 
-	targetIdx := p.poolIdx(size)
+	targetIdx := poolIdx(size)
 	idx := targetIdx
 	for idx < SizedPools {
 		select {
@@ -190,12 +182,7 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 	// to the correct pool (targetIdx) when released, avoiding misplacement
 	// in a smaller pool.
 	buf := make([]byte, capacity)
-	if capacity > size {
-		front := buf[:size:size]
-		storeFullCap(front, capacity)
-		return front
-	}
-	return buf
+	return buf[:size]
 }
 
 //go:inline
@@ -217,7 +204,7 @@ func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
 	}
 
 	if capB <= p.max {
-		idx := p.poolIdx(capB)
+		idx := poolIdx(capB)
 		// e.g. cap=8190, allocSize will be 8192, so we need to put it in the previous pool
 		// since the `if capB < p.min` check has already failed,
 		// capB < allocSize(idx) only happens when idx > 0
@@ -232,6 +219,14 @@ func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
 	}
 
 	put(b, p.largePool)
+}
+
+// poolIdx returns the index of the pool that guarantees the pool size is greater than or equal to the given size.
+func poolIdx(size int) int {
+	if size <= 0 {
+		return 0
+	}
+	return min(SizedPools-1, max(0, bits.Len(uint(size-1))-11))
 }
 
 //go:inline

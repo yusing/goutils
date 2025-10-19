@@ -196,7 +196,7 @@ func TestGetSizedMemorySafety(t *testing.T) {
 	remainingSize := allocSize(2)
 	totalSize := allocSize(4)
 	firstSize := totalSize - remainingSize
-	require.Equal(t, testBytesPool.poolIdx(totalSize), testBytesPool.poolIdx(firstSize))
+	require.Equal(t, poolIdx(totalSize), poolIdx(firstSize))
 
 	// Create buffer and split it
 	b1 := testBytesPool.GetSized(totalSize)
@@ -230,14 +230,14 @@ func TestPoolIdx(t *testing.T) {
 		size := allocSize(i)
 		expectedIdx := i
 		t.Run(fmt.Sprintf("size=%d", size), func(t *testing.T) {
-			idx := testBytesPool.poolIdx(size)
+			idx := poolIdx(size)
 			assert.Equal(t, expectedIdx, idx, "poolIdx(%d) should return %d", size, expectedIdx)
 			assert.Equal(t, size, allocSize(idx), "Pool size %d should be %d", size, allocSize(idx))
 		})
 	}
 	t.Run("verify_enough_pool_size", func(t *testing.T) {
 		for i := range testBytesPool.max {
-			idx := testBytesPool.poolIdx(i)
+			idx := poolIdx(i)
 			assert.GreaterOrEqual(t, allocSize(idx), i, "Pool size %d should be >= %d", allocSize(idx), i)
 		}
 	})
