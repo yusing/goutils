@@ -272,8 +272,7 @@ func BenchmarkBytesPool_ConcurrentAllocations(b *testing.B) {
 							var buf []byte
 							switch poolType {
 							case "unsized":
-								buf = slices.Grow(unsizedBytesPool.Get(), size)
-								setLen(&buf, size)
+								buf = slices.Grow(unsizedBytesPool.Get(), size)[:size]
 							case "sized":
 								buf = sizedBytesPool.GetSized(size)
 							case "sync":

@@ -19,13 +19,13 @@ type SizedBytesPoolSync struct {
 
 var (
 	sizedBytesPoolSync SizedBytesPoolSync
-	sizedFullCapsSync  *xsync.Map[uintptr, int]
+	sizedFullCapsSync  *xsync.Map[*byte, int]
 )
 
 func initSizedBytesPoolSync() {
 	sizedBytesPoolSync.min = allocSize(0)
 	sizedBytesPoolSync.max = allocSize(SizedPools - 1)
-	sizedFullCapsSync = xsync.NewMap[uintptr, int]()
+	sizedFullCapsSync = xsync.NewMap[*byte, int]()
 
 	sizedBytesPoolSync.smallPool = sync.Pool{
 		New: func() any {
@@ -55,8 +55,7 @@ func (p *SizedBytesPoolSync) GetSized(size int) []byte {
 	if size < p.min {
 		// min of unsized is MinAllocSize, which is larger than p.min
 		b := p.smallPool.Get().([]byte)
-		setLen(&b, size)
-		return b
+		return b[:size]
 	}
 
 	if size > p.max {
@@ -94,7 +93,7 @@ func (p *SizedBytesPoolSync) GetSized(size int) []byte {
 			addReused(size)
 
 			capB := cap(b)
-			setLen(&b, capB)
+			b = b[:capB] // set len to cap for further slicing
 
 			remainingSize := capB - size
 			if remainingSize > p.min { // remaining part > smallest pool size
@@ -122,7 +121,7 @@ func (p *SizedBytesPoolSync) Put(b []byte) {
 }
 
 func (p *SizedBytesPoolSync) put(b []byte, isRemaining bool) {
-	restoreFullCap(&b)
+	b = withFullCap(b)
 	capB := cap(b)
 
 	b = b[:0]

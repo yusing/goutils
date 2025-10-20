@@ -46,7 +46,7 @@ func poolChannelSize(idx int) int {
 var (
 	unsizedBytesPool UnsizedBytesPool
 	sizedBytesPool   SizedBytesPool
-	sizedFullCaps    *xsync.Map[uintptr, int]
+	sizedFullCaps    *xsync.Map[*byte, int]
 )
 
 func allocSize(idx int) int {
@@ -61,7 +61,7 @@ func initAll() {
 	unsizedBytesPool.pool = make(chan weakBuf, UnsizedPoolSize)
 	sizedBytesPool.min = allocSize(0)
 	sizedBytesPool.max = allocSize(SizedPools - 1)
-	sizedFullCaps = xsync.NewMap[uintptr, int]()
+	sizedFullCaps = xsync.NewMap[*byte, int]()
 	for i := range sizedBytesPool.pools {
 		sizedBytesPool.pools[i] = make(chan weakBuf, poolChannelSize(i))
 	}
@@ -124,8 +124,7 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 	if size < p.min {
 		// min of unsized is MinAllocSize, which is larger than p.min
 		b := unsizedBytesPool.Get()
-		setLen(&b, size)
-		return b
+		return b[:size]
 	}
 
 	if size > p.max {
@@ -165,7 +164,7 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 			addReused(size)
 
 			capB := cap(b)
-			setLen(&b, capB)
+			b = b[:capB] // set len to cap for further slicing
 
 			remainingSize := capB - size
 			if remainingSize > p.min { // remaining part > smallest pool size
@@ -199,7 +198,7 @@ func (p *SizedBytesPool) Put(b []byte) {
 }
 
 func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
-	restoreFullCap(&b)
+	b = withFullCap(b)
 	capB := cap(b)
 
 	if capB < p.min {
@@ -236,7 +235,7 @@ func poolIdx(size int) int {
 //go:inline
 func put(b []byte, pool chan weakBuf) {
 	// TODO: optimize to not call it for unsized bytes
-	restoreFullCap(&b)
+	b = withFullCap(b)
 	size := cap(b)
 
 	b = b[:0]
@@ -270,8 +269,8 @@ func storeFullCap(b []byte, c int) {
 	if c <= 0 {
 		return
 	}
-	ptr := sliceStruct(&b).ptr
-	if ptr == 0 {
+	ptr := unsafe.SliceData(b)
+	if ptr == nil {
 		return
 	}
 	if c == cap(b) {
@@ -280,31 +279,13 @@ func storeFullCap(b []byte, c int) {
 	sizedFullCaps.Store(ptr, c)
 }
 
-func restoreFullCap(b *[]byte) {
-	ptr := sliceStruct(b).ptr
-	if ptr == 0 {
-		return
+func withFullCap(b []byte) []byte {
+	ptr := unsafe.SliceData(b)
+	if ptr == nil {
+		return b
 	}
 	if fullCap, ok := sizedFullCaps.LoadAndDelete(ptr); ok {
-		setCap(b, fullCap)
+		return unsafe.Slice(&b[0], fullCap)
 	}
-}
-
-type sliceInternal struct {
-	ptr uintptr
-	len int
-	cap int
-}
-
-//go:inline
-func sliceStruct(b *[]byte) *sliceInternal {
-	return (*sliceInternal)(unsafe.Pointer(b))
-}
-
-func setLen(b *[]byte, len int) {
-	sliceStruct(b).len = len
-}
-
-func setCap(b *[]byte, cap int) {
-	sliceStruct(b).cap = cap
+	return b
 }

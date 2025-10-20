@@ -2,6 +2,7 @@ package synk
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,7 +12,7 @@ import (
 var testBytesPool = GetSizedBytesPool()
 
 func underlyingPtr(b []byte) uintptr {
-	return sliceStruct(&b).ptr
+	return reflect.ValueOf(b).Pointer()
 }
 
 func fill(b []byte) {
