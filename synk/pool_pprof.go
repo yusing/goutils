@@ -22,6 +22,7 @@ var (
 	dropped         poolCounters
 	reused          poolCounters
 	reusedRemaining poolCounters
+	gced            poolCounters
 )
 
 func addNonPooled(size int) {
@@ -38,9 +39,14 @@ func addDropped(size int) {
 	dropped.size.Add(uint64(size))
 }
 
-func addReusedRemaining(b []byte) {
+func addReusedRemaining(size int) {
 	reusedRemaining.num.Add(1)
-	reusedRemaining.size.Add(uint64(len(b)))
+	reusedRemaining.size.Add(uint64(size))
+}
+
+func addGced(size int) {
+	gced.num.Add(1)
+	gced.size.Add(uint64(size))
 }
 
 func initPoolStats() {
@@ -72,5 +78,7 @@ func printPoolStats() {
 		Str("sizeNonPooled", strutils.FormatByteSize(nonPooled.size.Load())).
 		Uint64("numReusedRemaining", reusedRemaining.num.Load()).
 		Str("sizeReusedRemaining", strutils.FormatByteSize(reusedRemaining.size.Load())).
+		Uint64("numGced", gced.num.Load()).
+		Str("sizeGced", strutils.FormatByteSize(gced.size.Load())).
 		Msg("bytes pool stats")
 }

@@ -27,11 +27,8 @@ func initSizedBytesPoolSync() {
 	sizedBytesPoolSync.max = allocSize(SizedPools - 1)
 	sizedFullCapsSync = xsync.NewMap[*byte, int]()
 
-	sizedBytesPoolSync.smallPool = sync.Pool{
-		New: func() any {
-			return make([]byte, MinAllocSize)
-		},
-	}
+	sizedBytesPoolSync.smallPool = sync.Pool{}
+	sizedBytesPoolSync.largePool = sync.Pool{}
 }
 
 func GetSizedBytesPoolSync() *SizedBytesPoolSync {
@@ -53,33 +50,11 @@ func (p *SizedBytesPoolSync) PutBuffer(buf *bytes.Buffer) {
 // Calling append to returned slice will cause undefined behavior.
 func (p *SizedBytesPoolSync) GetSized(size int) []byte {
 	if size < p.min {
-		// min of unsized is MinAllocSize, which is larger than p.min
-		b := p.smallPool.Get().([]byte)
-		return b[:size]
+		return pullOrGrowSync(&p.smallPool, size)
 	}
 
 	if size > p.max {
-		for {
-			bWeak := p.largePool.Get()
-			if bWeak != nil {
-				b := getBufFromWeakSync(bWeak)
-				if b == nil {
-					continue
-				}
-				capB := cap(b)
-				if capB < size {
-					addDropped(size - capB)
-					addNonPooled(size - capB)
-					newB := slices.Grow(b, size)
-					storeFullCap(newB, cap(newB))
-					return newB[:size]
-				}
-				addReused(capB)
-				return b[:size]
-			}
-			addNonPooled(size)
-			return make([]byte, size)
-		}
+		return pullOrGrowSync(&p.largePool, size)
 	}
 
 	targetIdx := poolIdx(size)
@@ -123,11 +98,10 @@ func (p *SizedBytesPoolSync) Put(b []byte) {
 func (p *SizedBytesPoolSync) put(b []byte, isRemaining bool) {
 	b = withFullCap(b)
 	capB := cap(b)
-
-	b = b[:0]
+	bWeak := makeWeak(b)
 
 	if capB < p.min {
-		p.smallPool.Put(makeWeak(&b))
+		p.smallPool.Put(bWeak)
 		return
 	}
 
@@ -139,14 +113,37 @@ func (p *SizedBytesPoolSync) put(b []byte, isRemaining bool) {
 		if capB < allocSize(idx) {
 			idx--
 		}
-		p.pools[idx].Put(makeWeak(&b))
+		p.pools[idx].Put(bWeak)
 		if isRemaining {
-			addReusedRemaining(b)
+			addReusedRemaining(capB)
 		}
 		return
 	}
 
-	p.largePool.Put(makeWeak(&b))
+	p.largePool.Put(bWeak)
+}
+
+func pullOrGrowSync(pool *sync.Pool, size int) []byte {
+	for {
+		bWeak := pool.Get()
+		if bWeak != nil {
+			b := getBufFromWeakSync(bWeak)
+			if b == nil {
+				continue
+			}
+			capB := cap(b)
+			if capB < size {
+				addDropped(size - capB)
+				addNonPooled(size - capB)
+				newB := slices.Grow(b, size)
+				return newB[:size]
+			}
+			addReused(capB)
+			return b[:size]
+		}
+		addNonPooled(size)
+		return make([]byte, size)
+	}
 }
 
 //go:inline

@@ -16,10 +16,13 @@ type UnsizedBytesPool struct {
 
 type SizedBytesPool struct {
 	// 1024*(2<<i) bytes
-	// 4KiB, 8KiB, 16KiB, 32KiB, 64KiB, 128KiB, 256KiB, 512KiB, 1MiB, 2MiB, 4MiB
+	// 4KiB, 8KiB, 16KiB, 32KiB, 64KiB
+	// , 128KiB, 256KiB, 512KiB, 1MiB, 2MiB, 4MiB
 	pools     [SizedPools]chan weakBuf
-	largePool chan weakBuf
-	min, max  int
+	smallPool chan weakBuf // everything smaller than allocSize(0)
+	largePool chan weakBuf // everything larger than allocSize(SizedPools-1)
+
+	min, max int
 }
 
 const (
@@ -34,6 +37,7 @@ const (
 	UnsizedPoolSize = UnsizedPoolLimit / MinAllocSize
 
 	SizedPools           = 11
+	SmallPoolChannelSize = UnsizedPoolSize
 	LargePoolChannelSize = 16
 )
 
@@ -53,19 +57,30 @@ func allocSize(idx int) int {
 	return 1024 * (2 << idx)
 }
 
+// poolIdx returns the index of the pool that guarantees the pool size is greater than or equal to the given size.
+func poolIdx(size int) int {
+	if size <= 0 {
+		return 0
+	}
+	return min(SizedPools-1, max(0, bits.Len(uint(size-1))-11))
+}
+
 func init() {
 	initAll()
 }
 
 func initAll() {
+	sizedFullCaps = xsync.NewMap[*byte, int]()
+
 	unsizedBytesPool.pool = make(chan weakBuf, UnsizedPoolSize)
+
 	sizedBytesPool.min = allocSize(0)
 	sizedBytesPool.max = allocSize(SizedPools - 1)
-	sizedFullCaps = xsync.NewMap[*byte, int]()
+	sizedBytesPool.smallPool = make(chan weakBuf, SmallPoolChannelSize)
+	sizedBytesPool.largePool = make(chan weakBuf, LargePoolChannelSize)
 	for i := range sizedBytesPool.pools {
 		sizedBytesPool.pools[i] = make(chan weakBuf, poolChannelSize(i))
 	}
-	sizedBytesPool.largePool = make(chan weakBuf, LargePoolChannelSize)
 
 	// Initialize sync pool version
 	initSizedBytesPoolSync()
@@ -109,7 +124,7 @@ func (p UnsizedBytesPool) Get() []byte {
 				continue
 			}
 			addReused(cap(b))
-			return b
+			return b[:0]
 		default:
 			addNonPooled(MinAllocSize)
 			return make([]byte, 0, MinAllocSize)
@@ -122,34 +137,11 @@ func (p UnsizedBytesPool) Get() []byte {
 // Calling append to returned slice will cause undefined behavior.
 func (p *SizedBytesPool) GetSized(size int) []byte {
 	if size < p.min {
-		// min of unsized is MinAllocSize, which is larger than p.min
-		b := unsizedBytesPool.Get()
-		return b[:size]
+		return pullOrGrow(p.smallPool, size)
 	}
 
 	if size > p.max {
-		for {
-			select {
-			case bWeak := <-p.largePool:
-				b := getBufFromWeak(bWeak)
-				if b == nil {
-					continue
-				}
-				capB := cap(b)
-				if capB < size {
-					addDropped(size - capB)
-					addNonPooled(size - capB)
-					newB := slices.Grow(b, size)
-					storeFullCap(newB, cap(newB))
-					return newB[:size]
-				}
-				addReused(capB)
-				return b[:size]
-			default:
-				addNonPooled(size)
-				return make([]byte, size)
-			}
-		}
+		return pullOrGrow(p.largePool, size)
 	}
 
 	targetIdx := poolIdx(size)
@@ -202,7 +194,7 @@ func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
 	capB := cap(b)
 
 	if capB < p.min {
-		unsizedBytesPool.Put(b)
+		put(b, p.smallPool)
 		return
 	}
 
@@ -216,7 +208,7 @@ func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
 		}
 		put(b, p.pools[idx])
 		if isRemaining {
-			addReusedRemaining(b)
+			addReusedRemaining(capB)
 		}
 		return
 	}
@@ -224,42 +216,69 @@ func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
 	put(b, p.largePool)
 }
 
-// poolIdx returns the index of the pool that guarantees the pool size is greater than or equal to the given size.
-func poolIdx(size int) int {
-	if size <= 0 {
-		return 0
+func pullOrGrow(pool chan weakBuf, size int) []byte {
+	for {
+		select {
+		case bWeak := <-pool:
+			b := getBufFromWeak(bWeak)
+			if b == nil {
+				continue
+			}
+			capB := cap(b)
+			if capB < size {
+				addDropped(size - capB)
+				addNonPooled(size - capB)
+				newB := slices.Grow(b, size)
+				return newB[:size]
+			}
+			addReused(capB)
+			return b[:size]
+		default:
+			addNonPooled(size)
+			return make([]byte, size)
+		}
 	}
-	return min(SizedPools-1, max(0, bits.Len(uint(size-1))-11))
 }
 
 //go:inline
 func put(b []byte, pool chan weakBuf) {
-	// TODO: optimize to not call it for unsized bytes
-	b = withFullCap(b)
-	size := cap(b)
+	w := makeWeak(b)
 
-	b = b[:0]
-	w := makeWeak(&b)
 	select {
 	case pool <- w:
 	default:
-		addDropped(size)
+		addDropped(w.cap)
 		// just drop it
 	}
 }
 
-type weakBuf = weak.Pointer[[]byte]
+type weakBuf struct {
+	ptr weak.Pointer[byte]
+	cap int
+}
 
-func makeWeak(b *[]byte) weakBuf {
-	return weak.Make(b)
+//go:inline
+func makeWeak(b []byte) weakBuf {
+	return weakBuf{
+		ptr: weak.Make(unsafe.SliceData(b)),
+		cap: cap(b),
+	}
 }
 
 //go:inline
 func getBufFromWeak(w weakBuf) []byte {
-	ptr := w.Value()
+	ptr := w.ptr.Value()
 	if ptr != nil {
-		return *ptr
+		fullCap, ok := sizedFullCaps.LoadAndDelete(ptr)
+		if !ok {
+			fullCap = w.cap
+		}
+		return unsafe.Slice(ptr, fullCap)
 	}
+
+	// nil pointer returned from weak.Pointer.Value()
+	// means the buffer is garbage collected
+	addGced(w.cap)
 	return nil
 }
 

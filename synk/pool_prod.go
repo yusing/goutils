@@ -5,6 +5,7 @@ package synk
 func addNonPooled(size int)       {}
 func addDropped(size int)         {}
 func addReused(size int)          {}
-func addReusedRemaining(b []byte) {}
+func addReusedRemaining(size int) {}
+func addGced(size int)            {}
 func initPoolStats()              {}
 func printPoolStats()             {}
