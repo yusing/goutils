@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"slices"
 	"sync"
-
-	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type SizedBytesPoolSync struct {
@@ -17,15 +15,14 @@ type SizedBytesPoolSync struct {
 	min, max  int
 }
 
-var (
-	sizedBytesPoolSync SizedBytesPoolSync
-	sizedFullCapsSync  *xsync.Map[*byte, int]
-)
+var sizedBytesPoolSync SizedBytesPoolSync
 
 func initSizedBytesPoolSync() {
+	for i := range sizedBytesPoolSync.pools {
+		sizedBytesPoolSync.pools[i] = sync.Pool{}
+	}
 	sizedBytesPoolSync.min = allocSize(0)
 	sizedBytesPoolSync.max = allocSize(SizedPools - 1)
-	sizedFullCapsSync = xsync.NewMap[*byte, int]()
 
 	sizedBytesPoolSync.smallPool = sync.Pool{}
 	sizedBytesPoolSync.largePool = sync.Pool{}
@@ -71,7 +68,7 @@ func (p *SizedBytesPoolSync) GetSized(size int) []byte {
 			b = b[:capB] // set len to cap for further slicing
 
 			remainingSize := capB - size
-			if remainingSize > p.min { // remaining part > smallest pool size
+			if remainingSize >= p.min { // remaining part > smallest pool size
 				p.put(b[size:], true)
 				front := b[:size:size]
 				storeFullCap(front, capB)
@@ -96,12 +93,14 @@ func (p *SizedBytesPoolSync) Put(b []byte) {
 }
 
 func (p *SizedBytesPoolSync) put(b []byte, isRemaining bool) {
-	b = withFullCap(b)
+	if !isRemaining {
+		b = withFullCap(b)
+	}
 	capB := cap(b)
 	bWeak := makeWeak(b)
 
 	if capB < p.min {
-		p.smallPool.Put(bWeak)
+		p.smallPool.Put(&bWeak)
 		return
 	}
 
@@ -113,14 +112,14 @@ func (p *SizedBytesPoolSync) put(b []byte, isRemaining bool) {
 		if capB < allocSize(idx) {
 			idx--
 		}
-		p.pools[idx].Put(bWeak)
+		p.pools[idx].Put(&bWeak)
 		if isRemaining {
 			addReusedRemaining(capB)
 		}
 		return
 	}
 
-	p.largePool.Put(bWeak)
+	p.largePool.Put(&bWeak)
 }
 
 func pullOrGrowSync(pool *sync.Pool, size int) []byte {
@@ -148,8 +147,5 @@ func pullOrGrowSync(pool *sync.Pool, size int) []byte {
 
 //go:inline
 func getBufFromWeakSync(w any) []byte {
-	if weakPtr, ok := w.(weakBuf); ok {
-		return getBufFromWeak(weakPtr)
-	}
-	return nil
+	return getBufFromWeak(*w.(*weakBuf))
 }

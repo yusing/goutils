@@ -53,8 +53,10 @@ var (
 	sizedFullCaps    *xsync.Map[*byte, int]
 )
 
+var allocSizes [SizedPools]int
+
 func allocSize(idx int) int {
-	return 1024 * (2 << idx)
+	return allocSizes[idx]
 }
 
 // poolIdx returns the index of the pool that guarantees the pool size is greater than or equal to the given size.
@@ -73,6 +75,10 @@ func initAll() {
 	sizedFullCaps = xsync.NewMap[*byte, int]()
 
 	unsizedBytesPool.pool = make(chan weakBuf, UnsizedPoolSize)
+
+	for i := range allocSizes {
+		allocSizes[i] = 1024 * (2 << i)
+	}
 
 	sizedBytesPool.min = allocSize(0)
 	sizedBytesPool.max = allocSize(SizedPools - 1)
@@ -159,7 +165,7 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 			b = b[:capB] // set len to cap for further slicing
 
 			remainingSize := capB - size
-			if remainingSize > p.min { // remaining part > smallest pool size
+			if remainingSize >= p.min { // remaining part > smallest pool size
 				p.put(b[size:], true)
 				front := b[:size:size]
 				storeFullCap(front, capB)
@@ -190,7 +196,9 @@ func (p *SizedBytesPool) Put(b []byte) {
 }
 
 func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
-	b = withFullCap(b)
+	if !isRemaining {
+		b = withFullCap(b)
+	}
 	capB := cap(b)
 
 	if capB < p.min {
@@ -269,11 +277,7 @@ func makeWeak(b []byte) weakBuf {
 func getBufFromWeak(w weakBuf) []byte {
 	ptr := w.ptr.Value()
 	if ptr != nil {
-		fullCap, ok := sizedFullCaps.LoadAndDelete(ptr)
-		if !ok {
-			fullCap = w.cap
-		}
-		return unsafe.Slice(ptr, fullCap)
+		return unsafe.Slice(ptr, w.cap)
 	}
 
 	// nil pointer returned from weak.Pointer.Value()
@@ -304,7 +308,7 @@ func withFullCap(b []byte) []byte {
 		return b
 	}
 	if fullCap, ok := sizedFullCaps.LoadAndDelete(ptr); ok {
-		return unsafe.Slice(&b[0], fullCap)
+		return unsafe.Slice(ptr, fullCap)
 	}
 	return b
 }

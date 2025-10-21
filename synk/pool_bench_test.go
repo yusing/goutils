@@ -216,11 +216,11 @@ func BenchmarkBytesPool_ConcurrentAllocations(b *testing.B) {
 		r := psrng(100)
 		switch {
 		case r < 50: // 50% - small allocations
-			sizes[i] = 4*kb + psrng(28*kb)
+			sizes[i] = 2*kb + psrng(2*kb)
 		case r < 80: // 30% - medium allocations
-			sizes[i] = 32*kb + psrng(224*kb)
+			sizes[i] = 32*kb + allocSize(psrng(SizedPools-2))
 		default: // 20% - large allocations
-			sizes[i] = 256*kb + psrng(3840*kb)
+			sizes[i] = 256*kb + ((1 + psrng(3)) * allocSize(psrng(SizedPools-1)))
 		}
 	}
 
