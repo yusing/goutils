@@ -50,6 +50,9 @@ func NewRequestInterceptedError(response *http.Response, data any) *RequestInter
 func AsRequestInterceptedError(err error, target **RequestInterceptedError) bool {
 	// fastpath to prevent reflection overhead in errors.As
 	if err, ok := err.(*RequestInterceptedError); ok {
+		if target == nil || err == nil {
+			return false
+		}
 		*target = err
 		return true
 	}
