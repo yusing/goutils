@@ -159,9 +159,15 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 			if b == nil {
 				continue // try same pool again
 			}
-			addReused(size)
 
+			// FIXME: this should not happen, but it does
+			// cap(p.pools[poolIdx(size)]) should be >= allocSize(idx)
 			capB := cap(b)
+			if capB < size {
+				p.put(b, false)
+				continue
+			}
+			addReused(size)
 			b = b[:capB] // set len to cap for further slicing
 
 			remainingSize := capB - size
