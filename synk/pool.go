@@ -173,9 +173,7 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 			remainingSize := capB - size
 			if remainingSize >= p.min { // remaining part > smallest pool size
 				p.put(b[size:], true)
-				front := b[:size:size]
-				storeFullCap(front, capB)
-				return front
+				return b[:size:size]
 			}
 			return b[:size]
 		default:
@@ -202,9 +200,6 @@ func (p *SizedBytesPool) Put(b []byte) {
 }
 
 func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
-	if !isRemaining {
-		b = withFullCap(b)
-	}
 	capB := cap(b)
 
 	if capB < p.min {
@@ -240,9 +235,10 @@ func pullOrGrow(pool chan weakBuf, size int) []byte {
 			}
 			capB := cap(b)
 			if capB < size {
-				addDropped(size - capB)
-				addNonPooled(size - capB)
-				newB := slices.Grow(b, size)
+				addDropped(capB)
+				addNonPooled(size)
+				// slices.Grow may reallocate; discard old buffer to avoid reuse
+				newB := slices.Grow(b[:0], size)
 				return newB[:size]
 			}
 			addReused(capB)
@@ -290,31 +286,4 @@ func getBufFromWeak(w weakBuf) []byte {
 	// means the buffer is garbage collected
 	addGced(w.cap)
 	return nil
-}
-
-// it should be used for sized bytes pool only,
-// since unsized bytes can grow and causes entries leaked in sizedFullCaps
-func storeFullCap(b []byte, c int) {
-	if c <= 0 {
-		return
-	}
-	ptr := unsafe.SliceData(b)
-	if ptr == nil {
-		return
-	}
-	if c == cap(b) {
-		return
-	}
-	sizedFullCaps.Store(ptr, c)
-}
-
-func withFullCap(b []byte) []byte {
-	ptr := unsafe.SliceData(b)
-	if ptr == nil {
-		return b
-	}
-	if fullCap, ok := sizedFullCaps.LoadAndDelete(ptr); ok {
-		return unsafe.Slice(ptr, fullCap)
-	}
-	return b
 }

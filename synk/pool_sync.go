@@ -70,9 +70,7 @@ func (p *SizedBytesPoolSync) GetSized(size int) []byte {
 			remainingSize := capB - size
 			if remainingSize >= p.min { // remaining part > smallest pool size
 				p.put(b[size:], true)
-				front := b[:size:size]
-				storeFullCap(front, capB)
-				return front
+				return b[:size:size]
 			}
 			return b[:size]
 		}
@@ -93,9 +91,6 @@ func (p *SizedBytesPoolSync) Put(b []byte) {
 }
 
 func (p *SizedBytesPoolSync) put(b []byte, isRemaining bool) {
-	if !isRemaining {
-		b = withFullCap(b)
-	}
 	capB := cap(b)
 	bWeak := makeWeak(b)
 
@@ -132,9 +127,9 @@ func pullOrGrowSync(pool *sync.Pool, size int) []byte {
 			}
 			capB := cap(b)
 			if capB < size {
-				addDropped(size - capB)
-				addNonPooled(size - capB)
-				newB := slices.Grow(b, size)
+				addDropped(capB)
+				addNonPooled(size)
+				newB := slices.Grow(b[:0], size)
 				return newB[:size]
 			}
 			addReused(capB)
