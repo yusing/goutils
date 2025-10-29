@@ -14,8 +14,9 @@ func NewHookReadCloser(c io.ReadCloser, hook func()) *HookReadCloser {
 
 // Close calls the hook function and closes the underlying reader
 func (r *HookReadCloser) Close() error {
+	err := r.c.Close()
 	r.hook()
-	return r.c.Close()
+	return err
 }
 
 // Read reads from the underlying reader.
