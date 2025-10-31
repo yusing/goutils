@@ -11,13 +11,13 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 	"github.com/yusing/goutils/env"
+	"github.com/yusing/goutils/synk"
 )
 
 // Manager handles WebSocket connection state and ping-pong
@@ -27,9 +27,9 @@ type Manager struct {
 	cancel           context.CancelFunc
 	pongWriteTimeout time.Duration
 	pingCheckTicker  *time.Ticker
-	lastPingTime     atomic.Value
+	lastPingTime     synk.Value[time.Time]
 	readCh           chan []byte
-	err              error
+	err              synk.Value[error]
 
 	writeLock sync.Mutex
 	closeOnce sync.Once
@@ -106,7 +106,7 @@ func NewManagerWithUpgrade(c *gin.Context) (*Manager, error) {
 
 	conn.SetCloseHandler(func(code int, text string) error {
 		if envDebug {
-			cm.err = fmt.Errorf("connection closed: code=%d, text=%s", code, text)
+			cm.setErrIfNil(fmt.Errorf("connection closed: code=%d, text=%s", code, text))
 		}
 		cm.Close()
 		return nil
@@ -142,7 +142,7 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 	write := func() {
 		data, err := getData()
 		if err != nil {
-			cm.err = err
+			cm.setErrIfNil(err)
 			cm.Close()
 			return
 		}
@@ -155,15 +155,15 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 		lastData = data
 
 		if err := cm.WriteJSON(data, interval); err != nil {
-			cm.err = err
+			cm.setErrIfNil(err)
 			cm.Close()
 		}
 	}
 
 	// initial write before the ticker starts
 	write()
-	if cm.err != nil {
-		return cm.err
+	if err := cm.err.Load(); err != nil {
+		return err
 	}
 
 	ticker := time.NewTicker(interval)
@@ -171,11 +171,11 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 	for {
 		select {
 		case <-cm.ctx.Done():
-			return cm.err
+			return cm.err.Load()
 		case <-ticker.C:
 			write()
-			if cm.err != nil {
-				return cm.err
+			if err := cm.err.Load(); err != nil {
+				return err
 			}
 		}
 	}
@@ -198,7 +198,7 @@ func (cm *Manager) WriteJSON(data any, timeout time.Duration) error {
 func (cm *Manager) WriteData(typ int, data []byte, timeout time.Duration) error {
 	select {
 	case <-cm.ctx.Done():
-		return cm.err
+		return cm.err.Load()
 	default:
 		cm.writeLock.Lock()
 		defer cm.writeLock.Unlock()
@@ -209,7 +209,7 @@ func (cm *Manager) WriteData(typ int, data []byte, timeout time.Duration) error 
 		err := cm.conn.WriteMessage(typ, data)
 		if err != nil {
 			if errors.Is(err, websocket.ErrCloseSent) {
-				return cm.err
+				return cm.err.Load()
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				return ErrWriteTimeout
@@ -227,7 +227,7 @@ func (cm *Manager) WriteData(typ int, data []byte, timeout time.Duration) error 
 func (cm *Manager) ReadJSON(out any, timeout time.Duration) error {
 	select {
 	case <-cm.ctx.Done():
-		return cm.err
+		return cm.err.Load()
 	case data := <-cm.readCh:
 		return json.Unmarshal(data, out)
 	case <-time.After(timeout):
@@ -238,7 +238,7 @@ func (cm *Manager) ReadJSON(out any, timeout time.Duration) error {
 func (cm *Manager) ReadBinary(timeout time.Duration) ([]byte, error) {
 	select {
 	case <-cm.ctx.Done():
-		return nil, cm.err
+		return nil, cm.err.Load()
 	case data := <-cm.readCh:
 		return data, nil
 	case <-time.After(timeout):
@@ -263,8 +263,8 @@ func (cm *Manager) close() {
 
 	cm.pingCheckTicker.Stop()
 
-	if cm.err != nil {
-		log.Debug().Caller(4).Msg("Closing WebSocket connection: " + cm.err.Error())
+	if err := cm.err.Load(); err != nil {
+		log.Debug().Caller(4).Msg("Closing WebSocket connection: " + err.Error())
 	} else {
 		log.Debug().Caller(4).Msg("Closing WebSocket connection")
 	}
@@ -281,9 +281,9 @@ func (cm *Manager) pingCheckRoutine() {
 		case <-cm.ctx.Done():
 			return
 		case <-cm.pingCheckTicker.C:
-			if time.Since(cm.lastPingTime.Load().(time.Time)) > 5*time.Second {
+			if time.Since(cm.lastPingTime.Load()) > 5*time.Second {
 				if envDebug {
-					cm.err = errors.New("no ping received in 5 seconds, closing connection")
+					cm.setErrIfNil(errors.New("no ping received in 5 seconds, closing connection"))
 				}
 				cm.Close()
 				return
@@ -301,7 +301,7 @@ func (cm *Manager) readRoutine() {
 			typ, data, err := cm.conn.ReadMessage()
 			if err != nil {
 				if cm.ctx.Err() == nil { // connection is not closed
-					cm.err = fmt.Errorf("failed to read message: %w", err)
+					cm.setErrIfNil(fmt.Errorf("failed to read message: %w", err))
 					cm.Close()
 				}
 				return
@@ -310,7 +310,7 @@ func (cm *Manager) readRoutine() {
 			if typ == websocket.TextMessage && string(data) == "ping" {
 				cm.lastPingTime.Store(time.Now())
 				if err := cm.WriteData(websocket.TextMessage, []byte("pong"), cm.pongWriteTimeout); err != nil {
-					cm.err = fmt.Errorf("failed to write pong message: %w", err)
+					cm.setErrIfNil(fmt.Errorf("failed to write pong message: %w", err))
 					cm.Close()
 					return
 				}
@@ -325,5 +325,13 @@ func (cm *Manager) readRoutine() {
 				}
 			}
 		}
+	}
+}
+
+// setErrIfNil sets the error if the error is nil.
+// so that only the first error is set.
+func (cm *Manager) setErrIfNil(err error) {
+	if err != nil {
+		cm.err.CompareAndSwap(nil, err)
 	}
 }
