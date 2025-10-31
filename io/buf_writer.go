@@ -52,7 +52,7 @@ func (b *BufferedWriter) Resize(size int) error {
 	if cap(b.buf) >= size {
 		b.buf = b.buf[:size]
 	} else {
-		b.Release()
+		b.release()
 		b.buf = bytesPool.GetSized(size)
 	}
 	b.err = nil
@@ -60,7 +60,7 @@ func (b *BufferedWriter) Resize(size int) error {
 	return nil
 }
 
-func (b *BufferedWriter) Release() {
+func (b *BufferedWriter) release() {
 	if b.buf == nil {
 		return
 	}
@@ -220,7 +220,7 @@ func (b *BufferedWriter) Close() error {
 	if b.n > 0 {
 		flushErr = b.Flush()
 	}
-	b.Release()
+	b.release()
 	if closer, ok := b.wr.(io.Closer); ok {
 		closerErr = closer.Close()
 	}
