@@ -6,6 +6,7 @@
 package ioutils
 
 import (
+	"errors"
 	"io"
 	"unicode/utf8"
 )
@@ -60,7 +61,11 @@ func (b *BufferedWriter) Resize(size int) error {
 }
 
 func (b *BufferedWriter) Release() {
+	if b.buf == nil {
+		return
+	}
 	bytesPool.Put(b.buf)
+	b.buf = nil
 }
 
 // Flush writes any buffered data to the underlying [io.Writer].
@@ -207,4 +212,17 @@ func (b *BufferedWriter) WriteString(s string) (int, error) {
 	b.n += n
 	nn += n
 	return nn, nil
+}
+
+func (b *BufferedWriter) Close() error {
+	var flushErr error
+	var closerErr error
+	if b.n > 0 {
+		flushErr = b.Flush()
+	}
+	b.Release()
+	if closer, ok := b.wr.(io.Closer); ok {
+		closerErr = closer.Close()
+	}
+	return errors.Join(flushErr, closerErr)
 }
