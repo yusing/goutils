@@ -5,7 +5,9 @@ package httputils
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 )
@@ -71,6 +73,7 @@ func (w *ModifyResponseWriter) WriteHeader(code int) {
 		Header:        w.w.Header(),
 		Request:       w.r,
 		ContentLength: int64(w.size),
+		Body:          io.NopCloser(bytes.NewReader(nil)),
 	}
 
 	if err := w.modifier(&resp); err != nil {
