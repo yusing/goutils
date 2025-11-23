@@ -13,7 +13,8 @@ import (
 )
 
 type (
-	ModifyResponseFunc   func(*http.Response) error
+	ModifyResponseFunc func(*http.Response) error
+	// Deprecated: Use rules.ResponseModifier instead.
 	ModifyResponseWriter struct {
 		w http.ResponseWriter
 		r *http.Request
@@ -28,6 +29,7 @@ type (
 	}
 )
 
+// Deprecated: Use rules.ResponseModifier instead.
 func NewModifyResponseWriter(w http.ResponseWriter, r *http.Request, f ModifyResponseFunc) *ModifyResponseWriter {
 	return &ModifyResponseWriter{
 		w:        w,
