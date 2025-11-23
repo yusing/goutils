@@ -29,7 +29,7 @@ func CopyClose(dst *ContextWriter, src *ContextReader, sizeHint int) (err error)
 		size = sizeHint
 	}
 
-	buf := bytesPool.GetSized(size)
+	buf := bytesPool.GetSized(min(size, 1024*1024)) // limit the buffer size to 1MB
 	defer bytesPool.Put(buf)
 	// close both as soon as one of them is done
 	wCloser, wCanClose := dst.Writer.(io.Closer)
