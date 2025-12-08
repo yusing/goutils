@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/yusing/goutils/synk"
 )
@@ -29,24 +30,30 @@ func CopyClose(dst *ContextWriter, src *ContextReader, sizeHint int) (err error)
 		size = sizeHint
 	}
 
-	buf := bytesPool.GetSized(min(size, 1024*1024)) // limit the buffer size to 1MB
+	buf := bytesPool.GetSized(min(size, 16*1024)) // limit the buffer size to 16KB
 	defer bytesPool.Put(buf)
 	// close both as soon as one of them is done
 	wCloser, wCanClose := dst.Writer.(io.Closer)
 	rCloser, rCanClose := src.Reader.(io.Closer)
 	if wCanClose || rCanClose {
-		go func() {
-			select {
-			case <-src.ctx.Done():
-			case <-dst.ctx.Done():
-			}
+		close := func() {
 			if rCanClose {
-				defer rCloser.Close()
+				rCloser.Close()
 			}
 			if wCanClose {
-				defer wCloser.Close()
+				wCloser.Close()
 			}
-		}()
+		}
+		if dst.ctx == src.ctx { // for http requests, src context and dst context are the same
+			context.AfterFunc(src.ctx, close)
+		} else {
+			var once sync.Once
+			closeOnce := func() {
+				once.Do(close)
+			}
+			context.AfterFunc(src.ctx, closeOnce)
+			context.AfterFunc(dst.ctx, closeOnce)
+		}
 	}
 	flusher := getHTTPFlusher(dst.Writer)
 	for {
