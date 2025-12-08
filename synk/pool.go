@@ -3,7 +3,6 @@ package synk
 import (
 	"bytes"
 	"math/bits"
-	"slices"
 	"unsafe"
 	"weak"
 
@@ -106,6 +105,12 @@ func (p UnsizedBytesPool) GetBuffer() *bytes.Buffer {
 	return bytes.NewBuffer(p.Get())
 }
 
+func (p UnsizedBytesPool) GetBufferAtLeast(size int) *bytes.Buffer {
+	b := bytes.NewBuffer(p.Get())
+	b.Grow(size)
+	return b
+}
+
 func (p UnsizedBytesPool) PutBuffer(buf *bytes.Buffer) {
 	buf.Reset()
 	p.Put(buf.Bytes())
@@ -143,11 +148,11 @@ func (p UnsizedBytesPool) Get() []byte {
 // Calling append to returned slice will cause undefined behavior.
 func (p *SizedBytesPool) GetSized(size int) []byte {
 	if size < p.min {
-		return pullOrGrow(p.smallPool, size)
+		return pullOrMake(p.smallPool, size)
 	}
 
 	if size > p.max {
-		return pullOrGrow(p.largePool, size)
+		return pullOrMake(p.largePool, size)
 	}
 
 	targetIdx := poolIdx(size)
@@ -225,7 +230,7 @@ func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
 	put(b, p.largePool)
 }
 
-func pullOrGrow(pool chan weakBuf, size int) []byte {
+func pullOrMake(pool chan weakBuf, size int) []byte {
 	for {
 		select {
 		case bWeak := <-pool:
@@ -237,9 +242,7 @@ func pullOrGrow(pool chan weakBuf, size int) []byte {
 			if capB < size {
 				addDropped(capB)
 				addNonPooled(size)
-				// slices.Grow may reallocate; discard old buffer to avoid reuse
-				newB := slices.Grow(b[:0], size)
-				return newB[:size]
+				return make([]byte, size)
 			}
 			addReused(capB)
 			return b[:size]
