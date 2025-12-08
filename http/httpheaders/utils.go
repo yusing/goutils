@@ -19,8 +19,6 @@ const (
 
 	HeaderContentType   = "Content-Type"
 	HeaderContentLength = "Content-Length"
-
-	HeaderGoDoxyCheckRedirect = "X-Godoxy-Check-Redirect"
 )
 
 // Hop-by-hop headers. These are removed when sent to the backend.
