@@ -36,6 +36,30 @@ type Response struct {
 	Header     http.Header
 }
 
+type UnwrittenBody struct {
+	buf    []byte
+	reader io.Reader
+}
+
+func newUnwrittenBody(buf []byte) UnwrittenBody {
+	return UnwrittenBody{
+		buf:    buf,
+		reader: bytes.NewReader(buf),
+	}
+}
+
+func (b UnwrittenBody) Read(p []byte) (int, error) {
+	return b.reader.Read(p)
+}
+
+func (b UnwrittenBody) Close() error {
+	return nil
+}
+
+func (b UnwrittenBody) Bytes() []byte {
+	return b.buf
+}
+
 func unwrapResponseModifier(w http.ResponseWriter) *ResponseModifier {
 	for {
 		switch ww := w.(type) {
@@ -123,9 +147,9 @@ func (rm *ResponseModifier) WriteHeader(code int) {
 // Every call to this function will return a new reader that starts from the beginning of the buffer.
 func (rm *ResponseModifier) BodyReader() io.ReadCloser {
 	if rm.buf == nil {
-		return io.NopCloser(bytes.NewReader(nil))
+		return newUnwrittenBody(nil)
 	}
-	return io.NopCloser(bytes.NewReader(rm.buf.Bytes()))
+	return newUnwrittenBody(rm.buf.Bytes())
 }
 
 func (rm *ResponseModifier) ResetBody() {
@@ -205,7 +229,12 @@ func (rm *ResponseModifier) Write(b []byte) (int, error) {
 
 	rm.bodyModified = true
 	if rm.buf == nil {
-		rm.buf = rm.bufPool.GetBuffer()
+		origContentLength := int(rm.origContentLength)
+		if origContentLength < 0 {
+			origContentLength, _ = strconv.Atoi(rm.w.Header().Get("Content-Length"))
+		}
+		// try to pre-allocate the buffer to at least the size of the buffer b or the content length (from header or caller)
+		rm.buf = rm.bufPool.GetBufferAtLeast(max(len(b), origContentLength))
 	}
 	return rm.buf.Write(b)
 }

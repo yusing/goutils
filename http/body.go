@@ -10,11 +10,17 @@ import (
 var bytesPool = synk.GetSizedBytesPool()
 var unsizedPool = synk.GetUnsizedBytesPool()
 
+func noopRelease([]byte) {}
+
 // ReadAllBody reads the body of the response into a buffer and returns it and a function to release the buffer.
 // If the response has a content length, it will be read into a sized buffer.
 // Otherwise, it will be read into an unsized buffer.
 // If error is not nil, the buffer will be released and release will be nil.
 func ReadAllBody(resp *http.Response) (b []byte, release func([]byte), err error) {
+	if unwritten, ok := resp.Body.(*UnwrittenBody); ok {
+		return unwritten.Bytes(), noopRelease, nil
+	}
+
 	if resp.ContentLength > 0 {
 		b = bytesPool.GetSized(int(resp.ContentLength))
 		_, err = io.ReadFull(resp.Body, b)
