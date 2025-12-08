@@ -2,6 +2,7 @@ package httputils
 
 import (
 	"bufio"
+	"fmt"
 	"net"
 	"net/http"
 )
@@ -100,10 +101,13 @@ func (lrm *LazyResponseModifier) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if hijacker, ok := lrm.w.(http.Hijacker); ok {
 		return hijacker.Hijack()
 	}
-	return nil, nil, http.ErrNotSupported
+	return nil, nil, fmt.Errorf("hijack: %w", http.ErrNotSupported)
 }
 
 // Unwrap returns the underlying ResponseWriter.
 func (lrm *LazyResponseModifier) Unwrap() http.ResponseWriter {
+	if lrm.rm != nil { // ResponseModifier does not allow direct unwrapping to expose methods like Flush()
+		return lrm.rm
+	}
 	return lrm.w
 }

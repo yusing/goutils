@@ -249,7 +249,7 @@ func (rm *ResponseModifier) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		rm.hijacked = true
 		return hijacker.Hijack()
 	}
-	return nil, nil, errors.New("hijack not supported")
+	return nil, nil, fmt.Errorf("hijack: %w", http.ErrNotSupported)
 }
 
 // FlushRelease flushes the response modifier and releases the resources
