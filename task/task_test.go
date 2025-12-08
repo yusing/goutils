@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	expect "github.com/yusing/goutils/testing"
+	"github.com/stretchr/testify/require"
 )
 
 func testTask() *Task {
@@ -35,7 +35,7 @@ func TestChildTaskCancellation(t *testing.T) {
 
 	select {
 	case <-child.Context().Done():
-		expect.ErrorIs(t, context.Canceled, child.Context().Err())
+		require.ErrorIs(t, child.Context().Err(), context.Canceled)
 	default:
 		t.Fatal("subTask context was not canceled as expected")
 	}
@@ -80,10 +80,10 @@ func TestTaskOnCancelOnFinished(t *testing.T) {
 		shouldTrueOnFinish = true
 	})
 
-	expect.False(t, shouldTrueOnFinish)
+	require.False(t, shouldTrueOnFinish)
 	task.FinishAndWait(nil)
-	expect.True(t, shouldTrueOnCancel)
-	expect.True(t, shouldTrueOnFinish)
+	require.True(t, shouldTrueOnCancel)
+	require.True(t, shouldTrueOnFinish)
 }
 
 func TestCommonFlowWithGracefulShutdown(t *testing.T) {
@@ -108,19 +108,19 @@ func TestCommonFlowWithGracefulShutdown(t *testing.T) {
 		}
 	}()
 
-	expect.NoError(t, gracefulShutdown(1*time.Second))
-	expect.True(t, finished)
+	require.NoError(t, gracefulShutdown(1*time.Second))
+	require.True(t, finished)
 
-	expect.ErrorIs(t, ErrProgramExiting, context.Cause(task.Context()))
-	expect.ErrorIs(t, context.Canceled, task.Context().Err())
-	expect.ErrorIs(t, ErrProgramExiting, task.FinishCause())
+	require.ErrorIs(t, context.Cause(task.Context()), ErrProgramExiting)
+	require.ErrorIs(t, task.Context().Err(), context.Canceled)
+	require.ErrorIs(t, task.FinishCause(), ErrProgramExiting)
 }
 
 func TestTimeoutOnGracefulShutdown(t *testing.T) {
 	t.Cleanup(testCleanup)
 	_ = testTask()
 
-	expect.ErrorIs(t, context.DeadlineExceeded, gracefulShutdown(time.Millisecond))
+	require.ErrorIs(t, gracefulShutdown(time.Millisecond), context.DeadlineExceeded)
 }
 
 func TestFinishMultipleCalls(t *testing.T) {

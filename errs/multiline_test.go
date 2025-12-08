@@ -4,16 +4,13 @@ import (
 	"net"
 	"testing"
 
-	expect "github.com/yusing/goutils/testing"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestWrapMultiline(t *testing.T) {
 	multiline := Multiline()
 	var wrapper error = wrap(multiline)
-	_, ok := wrapper.(*MultilineError)
-	if !ok {
-		t.Errorf("wrapper is not a MultilineError")
-	}
+	assert.IsType(t, &MultilineError{}, wrapper)
 }
 
 func TestPrependSubjectMultiline(t *testing.T) {
@@ -25,7 +22,7 @@ func TestPrependSubjectMultiline(t *testing.T) {
 
 	builder := NewBuilder()
 	builder.Add(multiline)
-	expect.Equal(t, len(multiline.currentParent.(*nestedError).Extras), len(builder.errs))
+	assert.Len(t, multiline.currentParent.(*nestedError).Extras, 3)
 }
 
 func TestFormattingMultiline(t *testing.T) {
@@ -49,15 +46,14 @@ func TestFormattingMultiline(t *testing.T) {
 		line 5: 3nd child inside line1.Extra, baseError
 		line 6: baseError, 2nd child of multiline.currentParent
 	*/
-	expect.Equal(t, multiline.Error(),
-		`
+	assert.Equal(t, `
 line 1
   • line 2
     • line 3
   • line 4
   • line 5
 line 6
-`[1:])
+`[1:], multiline.Error())
 }
 
 func BenchmarkMultiline(b *testing.B) {
