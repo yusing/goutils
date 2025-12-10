@@ -41,22 +41,22 @@ type UnwrittenBody struct {
 	reader io.Reader
 }
 
-func newUnwrittenBody(buf []byte) UnwrittenBody {
-	return UnwrittenBody{
+func newUnwrittenBody(buf []byte) *UnwrittenBody {
+	return &UnwrittenBody{
 		buf:    buf,
 		reader: bytes.NewReader(buf),
 	}
 }
 
-func (b UnwrittenBody) Read(p []byte) (int, error) {
+func (b *UnwrittenBody) Read(p []byte) (int, error) {
 	return b.reader.Read(p)
 }
 
-func (b UnwrittenBody) Close() error {
+func (b *UnwrittenBody) Close() error {
 	return nil
 }
 
-func (b UnwrittenBody) Bytes() []byte {
+func (b *UnwrittenBody) Bytes() []byte {
 	return b.buf
 }
 
