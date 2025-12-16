@@ -10,10 +10,7 @@ func SplitRune(s string, sep rune) []string {
 	if sep == 0 {
 		return strings.Split(s, "")
 	}
-	n := strings.Count(s, string(sep)) + 1
-	if n > len(s)+1 {
-		n = len(s) + 1
-	}
+	n := min(strings.Count(s, string(sep))+1, len(s)+1)
 	a := make([]string, n)
 	n--
 	i := 0

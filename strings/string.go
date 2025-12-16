@@ -2,6 +2,7 @@ package strutils
 
 import (
 	"strings"
+	"unicode"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -13,11 +14,11 @@ func CommaSeperatedList(s string) []string {
 	if s == "" {
 		return []string{}
 	}
-	res := SplitComma(s)
-	for i, part := range res {
-		res[i] = strings.TrimSpace(part)
-	}
-	return res
+	return strings.FieldsFunc(s, isCommaSpace)
+}
+
+func isCommaSpace(r rune) bool {
+	return r == ',' || unicode.IsSpace(r)
 }
 
 func Title(s string) string {
