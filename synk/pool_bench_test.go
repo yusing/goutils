@@ -42,15 +42,6 @@ func BenchmarkBytesPool_Get(b *testing.B) {
 					bytesPoolWithMemory.Put(buf)
 				}
 			})
-			b.Run("sync", func(b *testing.B) {
-				b.Cleanup(initAll)
-				bytesPoolSync := GetSizedBytesPoolSync()
-				for b.Loop() {
-					buf := bytesPoolSync.GetSized(size)
-					escape(buf)
-					bytesPoolSync.Put(buf)
-				}
-			})
 			b.Run("make", func(b *testing.B) {
 				for b.Loop() {
 					buf := make([]byte, size)
@@ -97,17 +88,6 @@ func BenchmarkBytesPool_GetAll(b *testing.B) {
 			i++
 		}
 	})
-	b.Run("sync", func(b *testing.B) {
-		b.Cleanup(initAll)
-		bytesPoolSync := GetSizedBytesPoolSync()
-		i := 0
-		for b.Loop() {
-			buf := bytesPoolSync.GetSized(sizes[i%len(sizes)])
-			escape(buf)
-			bytesPoolSync.Put(buf)
-			i++
-		}
-	})
 	b.Run("make", func(b *testing.B) {
 		i := 0
 		for b.Loop() {
@@ -146,17 +126,6 @@ func BenchmarkBytesPool_GetAllExceedsMax(b *testing.B) {
 			buf := bytesPoolWithMemory.GetSized(sizes[i%len(sizes)])
 			escape(buf)
 			bytesPoolWithMemory.Put(buf)
-			i++
-		}
-	})
-	b.Run("sync", func(b *testing.B) {
-		b.Cleanup(initAll)
-		bytesPoolSync := GetSizedBytesPoolSync()
-		i := 0
-		for b.Loop() {
-			buf := bytesPoolSync.GetSized(sizes[i%len(sizes)])
-			escape(buf)
-			bytesPoolSync.Put(buf)
 			i++
 		}
 	})
@@ -241,7 +210,7 @@ func BenchmarkBytesPool_ConcurrentAllocations(b *testing.B) {
 	concurrencyLevels := []int{1, 2, 4, 8, 16, 32}
 
 	for _, concurrency := range concurrencyLevels {
-		for _, poolType := range []string{"unsized", "sized", "sync", "make"} {
+		for _, poolType := range []string{"unsized", "sized", "make"} {
 			b.Run(fmt.Sprintf("workers-%d-%s", concurrency, poolType), func(b *testing.B) {
 				b.Cleanup(initAll)
 
@@ -275,8 +244,6 @@ func BenchmarkBytesPool_ConcurrentAllocations(b *testing.B) {
 								buf = slices.Grow(unsizedBytesPool.Get(), size)[:size]
 							case "sized":
 								buf = sizedBytesPool.GetSized(size)
-							case "sync":
-								buf = sizedBytesPoolSync.GetSized(size)
 							case "make":
 								buf = make([]byte, size)
 							}
@@ -299,8 +266,6 @@ func BenchmarkBytesPool_ConcurrentAllocations(b *testing.B) {
 								unsizedBytesPool.Put(buf)
 							case "sized":
 								sizedBytesPool.Put(buf)
-							case "sync":
-								sizedBytesPoolSync.Put(buf)
 							}
 						}
 					})

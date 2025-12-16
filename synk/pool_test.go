@@ -159,6 +159,15 @@ func TestGetSizedBufferTooSmall(t *testing.T) {
 	assert.Equal(t, underlyingPtr(b1), underlyingPtr(b3))
 }
 
+func TestGetSizedLargeBuffer(t *testing.T) {
+	t.Cleanup(initAll)
+	largeSize := allocSize(SizedPools-1) * 2
+	b := testBytesPool.GetSized(largeSize)
+	assert.Equal(t, largeSize, len(b))
+	assert.Equal(t, largeSize, cap(b))
+	testBytesPool.Put(b)
+}
+
 func TestGetSizedMultipleSplits(t *testing.T) {
 	t.Cleanup(initAll)
 

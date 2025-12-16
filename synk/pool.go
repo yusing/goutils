@@ -19,7 +19,6 @@ type SizedBytesPool struct {
 	// , 128KiB, 256KiB, 512KiB, 1MiB, 2MiB, 4MiB
 	pools     [SizedPools]chan weakBuf
 	smallPool chan weakBuf // everything smaller than allocSize(0)
-	largePool chan weakBuf // everything larger than allocSize(SizedPools-1)
 
 	min, max int
 }
@@ -37,7 +36,6 @@ const (
 
 	SizedPools           = 11
 	SmallPoolChannelSize = UnsizedPoolSize
-	LargePoolChannelSize = 16
 )
 
 // poolChannelSize returns the channel size for a given pool index.
@@ -82,13 +80,9 @@ func initAll() {
 	sizedBytesPool.min = allocSize(0)
 	sizedBytesPool.max = allocSize(SizedPools - 1)
 	sizedBytesPool.smallPool = make(chan weakBuf, SmallPoolChannelSize)
-	sizedBytesPool.largePool = make(chan weakBuf, LargePoolChannelSize)
 	for i := range sizedBytesPool.pools {
 		sizedBytesPool.pools[i] = make(chan weakBuf, poolChannelSize(i))
 	}
-
-	// Initialize sync pool version
-	initSizedBytesPoolSync()
 
 	initPoolStats()
 }
@@ -148,11 +142,12 @@ func (p UnsizedBytesPool) Get() []byte {
 // Calling append to returned slice will cause undefined behavior.
 func (p *SizedBytesPool) GetSized(size int) []byte {
 	if size < p.min {
-		return pullOrMake(p.smallPool, size)
+		return pullOrMake(p.smallPool, p.min)[:size]
 	}
 
 	if size > p.max {
-		return pullOrMake(p.largePool, size)
+		addNonPooled(size)
+		return make([]byte, size)
 	}
 
 	targetIdx := poolIdx(size)
@@ -227,10 +222,15 @@ func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
 		return
 	}
 
-	put(b, p.largePool)
+	// too large, split and put again
+	// large buffers are rare, and unlikely to be used again, so make use of it for smaller pools
+	cap1 := capB / 2
+	b = b[:capB]
+	p.put(b[:cap1:cap1], false)
+	p.put(b[cap1:], false)
 }
 
-func pullOrMake(pool chan weakBuf, size int) []byte {
+func pullOrMake(pool <-chan weakBuf, size int) []byte {
 	for {
 		select {
 		case bWeak := <-pool:
@@ -239,11 +239,6 @@ func pullOrMake(pool chan weakBuf, size int) []byte {
 				continue
 			}
 			capB := cap(b)
-			if capB < size {
-				addDropped(capB)
-				addNonPooled(size)
-				return make([]byte, size)
-			}
 			addReused(capB)
 			return b[:size]
 		default:
