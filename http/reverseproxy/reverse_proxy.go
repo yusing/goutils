@@ -95,6 +95,8 @@ type ReverseProxy struct {
 
 	HandlerFunc http.HandlerFunc
 
+	OnSchemeMisMatch func() (retry bool)
+
 	TargetName string
 	TargetURL  *url.URL
 }
@@ -290,7 +292,6 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 		outreq.Header = make(http.Header) // Issue 33142: historical behavior was to always allocate
 	}
 
-	p.rewriteRequestURL(outreq)
 	outreq.Close = false
 
 	reqUpType := httpheaders.UpgradeType(outreq.Header)
@@ -381,12 +382,23 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 	}
 	outreq = outreq.WithContext(httptrace.WithClientTrace(outreq.Context(), trace)) //nolint:contextcheck
 
+retry:
+	p.rewriteRequestURL(outreq)
 	res, err := transport.RoundTrip(outreq)
 
 	roundTripMutex.Lock()
 	roundTripDone = true
 	roundTripMutex.Unlock()
 	if err != nil {
+		if p.OnSchemeMisMatch != nil {
+			var tlsErr tls.RecordHeaderError
+			if errors.Is(err, http.ErrSchemeMismatch) || errors.As(err, &tlsErr) {
+				retry := p.OnSchemeMisMatch()
+				if retry {
+					goto retry
+				}
+			}
+		}
 		p.errorHandler(rw, outreq, err, false)
 		res = &http.Response{
 			Status:     http.StatusText(http.StatusBadGateway),
