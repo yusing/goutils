@@ -5,7 +5,7 @@ go 1.25.5
 replace github.com/yusing/goutils => ../..
 
 require (
-	github.com/quic-go/quic-go v0.57.1
+	github.com/quic-go/quic-go v0.58.0
 	github.com/rs/zerolog v1.34.0
 	github.com/yusing/goutils v0.7.0
 	golang.org/x/net v0.48.0
