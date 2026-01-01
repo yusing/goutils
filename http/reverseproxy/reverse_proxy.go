@@ -99,6 +99,8 @@ type ReverseProxy struct {
 
 	TargetName string
 	TargetURL  *url.URL
+
+	useH2C bool
 }
 
 func singleJoiningSlash(a, b string) string {
@@ -142,19 +144,30 @@ func NewReverseProxy(name string, target *url.URL, transport http.RoundTripper) 
 	if transport == nil {
 		panic("nil transport")
 	}
+
 	rp := &ReverseProxy{
 		Logger:     log.With().Str("name", name).Logger(),
 		Transport:  transport,
 		TargetName: name,
 		TargetURL:  target,
 	}
+
+	if target != nil && target.Scheme == "h2c" {
+		rp.useH2C = true
+		rp.Transport = newH2CRoundTripper(transport)
+	}
+
 	rp.HandlerFunc = rp.handler
 	return rp
 }
 
 func (p *ReverseProxy) rewriteRequestURL(req *http.Request) {
 	targetQuery := p.TargetURL.RawQuery
-	req.URL.Scheme = p.TargetURL.Scheme
+	if p.useH2C {
+		req.URL.Scheme = "http"
+	} else {
+		req.URL.Scheme = p.TargetURL.Scheme
+	}
 	req.URL.Host = p.TargetURL.Host
 	req.URL.Path, req.URL.RawPath = joinURLPath(p.TargetURL, req.URL)
 	if targetQuery == "" || req.URL.RawQuery == "" {
@@ -162,6 +175,39 @@ func (p *ReverseProxy) rewriteRequestURL(req *http.Request) {
 	} else {
 		req.URL.RawQuery = targetQuery + "&" + req.URL.RawQuery
 	}
+}
+
+type h2cRoundTripper struct {
+	h1  http.RoundTripper
+	h2c *http2.Transport
+}
+
+func newH2CRoundTripper(base http.RoundTripper) http.RoundTripper {
+	dialCtx := defaultH2CDialer.DialContext
+	if tr, ok := base.(*http.Transport); ok && tr.DialContext != nil {
+		dialCtx = tr.DialContext
+	}
+	return &h2cRoundTripper{
+		h1: base,
+		h2c: &http2.Transport{
+			AllowHTTP: true,
+			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+				return dialCtx(ctx, network, addr)
+			},
+		},
+	}
+}
+
+var defaultH2CDialer = net.Dialer{}
+
+func (rt *h2cRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req == nil || req.URL == nil {
+		return rt.h1.RoundTrip(req)
+	}
+	if req.URL.Scheme == "http" {
+		return rt.h2c.RoundTrip(req)
+	}
+	return rt.h1.RoundTrip(req)
 }
 
 func copyHeader(dst, src http.Header) {

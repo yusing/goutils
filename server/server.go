@@ -16,6 +16,8 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/yusing/goutils/env"
 	"github.com/yusing/goutils/task"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 type CertProvider interface {
@@ -85,7 +87,7 @@ func NewServer(opt Options) (s *Server) {
 	if opt.HTTPAddr != "" {
 		httpSer = &http.Server{
 			Addr:    opt.HTTPAddr,
-			Handler: opt.Handler,
+			Handler: h2c.NewHandler(opt.Handler, &http2.Server{}),
 		}
 	}
 	if certAvailable && opt.HTTPSAddr != "" {
