@@ -97,7 +97,11 @@ func NewServer(opt Options) (s *Server) {
 			TLSConfig: &tls.Config{
 				GetCertificate: opt.CertProvider.GetCert,
 				MinVersion:     tls.VersionTLS12,
+				NextProtos:     []string{http2.NextProtoTLS, "http/1.1"},
 			},
+		}
+		if err := http2.ConfigureServer(httpsSer, &http2.Server{}); err != nil {
+			logger.Error().Err(err).Msg("failed to configure HTTP/2 for HTTPS server")
 		}
 	}
 	return &Server{
