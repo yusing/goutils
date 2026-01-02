@@ -321,7 +321,18 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 		}()
 	}
 
-	outreq := req.Clone(ctx)
+	outreq := req.WithContext(ctx)
+	outreq.RequestURI = ""
+	if req.URL != nil {
+		u := *req.URL
+		outreq.URL = &u
+	}
+	outreq.Header = req.Header.Clone()
+	if len(req.Trailer) > 0 {
+		outreq.Trailer = req.Trailer.Clone()
+	} else {
+		outreq.Trailer = nil
+	}
 	if req.ContentLength == 0 {
 		outreq.Body = nil // Issue 16036: nil Body for http.Transport retries
 	}
@@ -408,25 +419,27 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 		roundTripMutex sync.Mutex
 		roundTripDone  bool
 	)
-	trace := &httptrace.ClientTrace{
-		Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
-			roundTripMutex.Lock()
-			defer roundTripMutex.Unlock()
-			if roundTripDone {
-				// If RoundTrip has returned, don't try to further modify
-				// the ResponseWriter's header map.
-				return nil
-			}
-			h := rw.Header()
-			copyHeader(h, http.Header(header))
-			rw.WriteHeader(code)
+	if req.Header.Get("Expect") != "" {
+		trace := &httptrace.ClientTrace{
+			Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
+				roundTripMutex.Lock()
+				defer roundTripMutex.Unlock()
+				if roundTripDone {
+					// If RoundTrip has returned, don't try to further modify
+					// the ResponseWriter's header map.
+					return nil
+				}
+				h := rw.Header()
+				copyHeader(h, http.Header(header))
+				rw.WriteHeader(code)
 
-			// Clear headers, it's not automatically done by ResponseWriter.WriteHeader() for 1xx responses
-			clear(h)
-			return nil
-		},
+				// Clear headers, it's not automatically done by ResponseWriter.WriteHeader() for 1xx responses
+				clear(h)
+				return nil
+			},
+		}
+		outreq = outreq.WithContext(httptrace.WithClientTrace(outreq.Context(), trace)) //nolint:contextcheck
 	}
-	outreq = outreq.WithContext(httptrace.WithClientTrace(outreq.Context(), trace)) //nolint:contextcheck
 
 retry:
 	p.rewriteRequestURL(outreq)
