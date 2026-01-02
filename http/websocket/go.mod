@@ -8,6 +8,7 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
+	github.com/yusing/gointernals v0.1.16
 	github.com/yusing/goutils v0.7.0
 )
 

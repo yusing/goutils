@@ -135,9 +135,6 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 	var lastData any
 
 	var equals DeduplicateFunc
-	if len(deduplicate) > 0 {
-		equals = deduplicate[0]
-	}
 
 	write := func() {
 		data, err := getData()
@@ -164,6 +161,12 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 	write()
 	if err := cm.err.Load(); err != nil {
 		return err
+	}
+
+	if len(deduplicate) > 0 {
+		equals = deduplicate[0]
+	} else {
+		equals = DeepEqual
 	}
 
 	ticker := time.NewTicker(interval)
