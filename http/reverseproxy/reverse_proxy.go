@@ -221,6 +221,9 @@ func copyHeader(dst, src http.Header) {
 //go:linkname errStreamClosed golang.org/x/net/http2.errStreamClosed
 var errStreamClosed error
 
+//go:linkname errClientDisconnected golang.org/x/net/http2.errClientDisconnected
+var errClientDisconnected error
+
 func (p *ReverseProxy) errorHandler(rw http.ResponseWriter, r *http.Request, err error, writeHeader bool) {
 	reqURL := r.Host + r.URL.Path
 	switch {
@@ -238,7 +241,7 @@ func (p *ReverseProxy) errorHandler(rw http.ResponseWriter, r *http.Request, err
 			log.Err(err).Msg("underlying error")
 			goto logged
 		}
-		if errors.Is(err, errStreamClosed) {
+		if errors.Is(err, errStreamClosed) || errors.Is(err, errClientDisconnected) {
 			goto logged
 		}
 		var h2Err http2.StreamError
