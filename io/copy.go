@@ -5,20 +5,30 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"sync"
 
 	"github.com/yusing/goutils/synk"
 )
 
 var bytesPool = synk.GetSizedBytesPool()
+var noContext context.Context
+
+func CopyCloseWithContext(ctx context.Context, dst io.Writer, src io.Reader, sizeHint int) (err error) {
+	return copyClose(ctx, dst, src, sizeHint)
+}
+
+func CopyClose(dst io.Writer, src io.Reader, sizeHint int) (err error) {
+	return copyClose(noContext, dst, src, sizeHint)
+}
+
+const minBufferSize = 256
 
 // Copyright 2009 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // This is a copy of io.Copy with context and HTTP flusher handling
 // Author: yusing <yusing@6uo.me>.
-func CopyClose(dst *ContextWriter, src *ContextReader, sizeHint int) (err error) {
-	size := 16384
-	if l, ok := src.Reader.(*io.LimitedReader); ok {
+func copyClose(ctx context.Context, dst io.Writer, src io.Reader, sizeHint int) (err error) {
+	size := 32 * 1024
+	if l, ok := src.(*io.LimitedReader); ok {
 		if int64(size) > l.N {
 			if l.N < 1 {
 				size = 1
@@ -30,36 +40,37 @@ func CopyClose(dst *ContextWriter, src *ContextReader, sizeHint int) (err error)
 		size = sizeHint
 	}
 
-	buf := bytesPool.GetSized(min(size, 16*1024)) // limit the buffer size to 16KB
-	defer bytesPool.Put(buf)
-	// close both as soon as one of them is done
-	wCloser, wCanClose := dst.Writer.(io.Closer)
-	rCloser, rCanClose := src.Reader.(io.Closer)
-	if wCanClose || rCanClose {
-		close := func() {
-			if rCanClose {
-				rCloser.Close()
+	var buf []byte
+	if size > minBufferSize {
+		buf = bytesPool.GetSized(min(size, 32*1024)) // limit the buffer size to 32KB
+		defer bytesPool.Put(buf)
+	} else {
+		var array [minBufferSize]byte
+		buf = array[:size]
+	}
+
+	if ctx != nil {
+		// close both as soon as one of them is done
+		wCloser, wCanClose := dst.(io.Closer)
+		rCloser, rCanClose := src.(io.Closer)
+		if wCanClose || rCanClose {
+			close := func() {
+				if rCanClose {
+					rCloser.Close()
+				}
+				if wCanClose {
+					wCloser.Close()
+				}
 			}
-			if wCanClose {
-				wCloser.Close()
-			}
-		}
-		if dst.ctx == src.ctx { // for http requests, src context and dst context are the same
-			context.AfterFunc(src.ctx, close)
-		} else {
-			var once sync.Once
-			closeOnce := func() {
-				once.Do(close)
-			}
-			context.AfterFunc(src.ctx, closeOnce)
-			context.AfterFunc(dst.ctx, closeOnce)
+			context.AfterFunc(ctx, close)
 		}
 	}
-	flusher := getHTTPFlusher(dst.Writer)
+
+	flusher := getHTTPFlusher(dst)
 	for {
-		nr, er := src.Reader.Read(buf)
+		nr, er := src.Read(buf)
 		if nr > 0 {
-			nw, ew := dst.Writer.Write(buf[0:nr])
+			nw, ew := dst.Write(buf[0:nr])
 			if nw < 0 || nr < nw {
 				nw = 0
 				if ew == nil {
@@ -88,10 +99,6 @@ func CopyClose(dst *ContextWriter, src *ContextReader, sizeHint int) (err error)
 			return
 		}
 	}
-}
-
-func CopyCloseWithContext(ctx context.Context, dst io.Writer, src io.Reader, sizeHint int) (err error) {
-	return CopyClose(NewContextWriter(ctx, dst), NewContextReader(ctx, src), sizeHint)
 }
 
 type flushErrorInterface interface {
