@@ -20,7 +20,7 @@ func TestPrependSubjectMultiline(t *testing.T) {
 	multiline.AddLines([]any{1, "2", 3.0, net.IPv4(127, 0, 0, 1)})
 	multiline.Subject("subject")
 
-	builder := NewBuilder()
+	var builder Builder
 	builder.Add(multiline)
 	assert.Len(t, multiline.currentParent.(*nestedError).Extras, 3)
 }
