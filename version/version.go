@@ -39,6 +39,11 @@ func (v Version) MarshalText() ([]byte, error) {
 	return []byte(v.String()), nil
 }
 
+func (v *Version) UnmarshalText(text []byte) error {
+	*v = Parse(string(text))
+	return nil
+}
+
 func (v Version) IsNewerThan(other Version) bool {
 	if v.Generation != other.Generation {
 		return v.Generation > other.Generation
