@@ -15,19 +15,19 @@ type (
 	}
 
 	BidirectionalPipe struct {
-		pSrcDst *Pipe
-		pDstSrc *Pipe
+		pSrcDst Pipe
+		pDstSrc Pipe
 	}
 )
 
-func NewPipe(ctx context.Context, r io.ReadCloser, w io.WriteCloser) *Pipe {
-	return &Pipe{
+func NewPipe(ctx context.Context, r io.ReadCloser, w io.WriteCloser) Pipe {
+	return Pipe{
 		r: ContextReader{ctx: ctx, Reader: r},
 		w: ContextWriter{ctx: ctx, Writer: w},
 	}
 }
 
-func (p *Pipe) Start() (err error) {
+func (p Pipe) Start() (err error) {
 	err = CopyClose(&p.w, &p.r, 0)
 	switch {
 	case
