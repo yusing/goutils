@@ -174,7 +174,7 @@ Reads a TextMessage, JSON-unmarshals it into the provided struct.
 
 #### ReadBinary
 
-```io.Writer
+```go
 func (m *Manager) ReadBinary(timeout time.Duration) ([]byte, error)
 ```
 
