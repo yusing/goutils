@@ -2,13 +2,11 @@ package gperr
 
 import (
 	"fmt"
-	"sync"
 )
 
 type Builder struct {
 	about string
 	errs  []error
-	mu    sync.RWMutex
 }
 
 // NewBuilder creates a new Builder.
