@@ -13,12 +13,12 @@ type baseError struct {
 	Err error `json:"err"`
 }
 
-func (err *baseError) Unwrap() error {
+func (err baseError) Unwrap() error {
 	return err.Err
 }
 
-func (err *baseError) Is(other error) bool {
-	if other, ok := other.(*baseError); ok {
+func (err baseError) Is(other error) bool {
+	if other, ok := other.(baseError); ok {
 		return errors.Is(err.Err, other.Err)
 	}
 	return errors.Is(err.Err, other)
@@ -29,30 +29,30 @@ func (err baseError) Subject(subject string) Error {
 	return &err
 }
 
-func (err *baseError) Subjectf(format string, args ...any) Error {
+func (err baseError) Subjectf(format string, args ...any) Error {
 	if len(args) > 0 {
 		return err.Subject(fmt.Sprintf(format, args...))
 	}
 	return err.Subject(format)
 }
 
-func (err *baseError) With(extra error) Error {
+func (err baseError) With(extra error) Error {
 	if extra == nil {
 		return err
 	}
-	return &nestedError{&baseError{err.Err}, []error{extra}}
+	return &nestedError{baseError{err.Err}, []error{extra}}
 }
 
 func (err baseError) Withf(format string, args ...any) Error {
 	return &nestedError{&err, []error{fmt.Errorf(format, args...)}}
 }
 
-func (err *baseError) Error() string {
+func (err baseError) Error() string {
 	return err.Err.Error()
 }
 
 // MarshalJSON implements the json.Marshaler interface.
-func (err *baseError) MarshalJSON() ([]byte, error) {
+func (err baseError) MarshalJSON() ([]byte, error) {
 	//nolint:errorlint
 	switch err := err.Err.(type) {
 	case Error, *withSubject:
@@ -66,10 +66,10 @@ func (err *baseError) MarshalJSON() ([]byte, error) {
 	}
 }
 
-func (err *baseError) Plain() []byte {
+func (err baseError) Plain() []byte {
 	return Plain(err.Err)
 }
 
-func (err *baseError) Markdown() []byte {
+func (err baseError) Markdown() []byte {
 	return Markdown(err.Err)
 }

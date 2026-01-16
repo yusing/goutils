@@ -13,11 +13,11 @@ func New(message string) Error {
 	if message == "" {
 		return nil
 	}
-	return &baseError{newError(message)}
+	return baseError{newError(message)}
 }
 
 func Errorf(format string, args ...any) Error {
-	return &baseError{fmt.Errorf(format, args...)}
+	return baseError{fmt.Errorf(format, args...)}
 }
 
 // Wrap wraps message in front of the error message.
@@ -30,12 +30,12 @@ func Wrap(err error, message ...string) Error {
 	}
 	//nolint:errorlint
 	switch err := wrap(err).(type) {
-	case *baseError:
-		return &baseError{&wrappedError{err.Err, message[0]}}
+	case baseError:
+		return baseError{&wrappedError{err.Err, message[0]}}
 	case *nestedError:
 		return &nestedError{Extras: slices.Clone(err.Extras), Err: &wrappedError{err.Err, message[0]}}
 	}
-	return &baseError{&wrappedError{err, message[0]}}
+	return baseError{&wrappedError{err, message[0]}}
 }
 
 func Unwrap(err error) Error {
@@ -44,9 +44,9 @@ func Unwrap(err error) Error {
 	case interface{ Unwrap() []error }:
 		return &nestedError{Extras: err.Unwrap()}
 	case interface{ Unwrap() error }:
-		return &baseError{err.Unwrap()}
+		return baseError{err.Unwrap()}
 	default:
-		return &baseError{err}
+		return baseError{err}
 	}
 }
 
@@ -59,7 +59,7 @@ func wrap(err error) Error {
 	case Error:
 		return err
 	}
-	return &baseError{err}
+	return baseError{err}
 }
 
 func Join(errors ...error) Error {

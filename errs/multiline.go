@@ -161,7 +161,7 @@ func (m *MultilineError) ensureNested(err Error) *nestedError {
 		return nested
 	}
 	// Convert baseError to nestedError
-	base := err.(*baseError)
+	base := err.(baseError)
 	nested := &nestedError{Err: base.Err, Extras: []error{}}
 	// Update in stack
 	for i, stackErr := range m.parentStack {

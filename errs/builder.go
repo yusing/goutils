@@ -106,7 +106,7 @@ func (b *Builder) ForEach(fn func(error)) {
 
 func (b *Builder) add(err error) {
 	switch err := err.(type) { //nolint:errorlint
-	case *baseError:
+	case baseError:
 		b.errs = append(b.errs, err.Err)
 	case *nestedError:
 		if err.Err == nil {
