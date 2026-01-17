@@ -1,14 +1,14 @@
 module github.com/yusing/goutils
 
-go 1.25.5
+go 1.25.6
 
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3
-	github.com/puzpuzpuz/xsync/v4 v4.2.0
+	github.com/puzpuzpuz/xsync/v4 v4.3.0
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.11.1
-	golang.org/x/net v0.48.0
-	golang.org/x/text v0.32.0
+	golang.org/x/net v0.49.0
+	golang.org/x/text v0.33.0
 )
 
 require (
