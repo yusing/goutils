@@ -34,7 +34,7 @@ func New[T Object](name string) Pool[T] {
 	return Pool[T]{m: xsync.NewMap[string, T](), name: name}
 }
 
-func (p *Pool[T]) ToggleLog(v bool) {
+func (p *Pool[T]) DisableLog(v bool) {
 	p.disableLog.Store(v)
 }
 
