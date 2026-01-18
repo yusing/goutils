@@ -3,8 +3,10 @@ package task
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/puzpuzpuz/xsync/v4"
 	gperr "github.com/yusing/goutils/errs"
 	"github.com/yusing/goutils/intern"
 )
@@ -41,6 +43,8 @@ type (
 		callbacks    *Dependencies[*Callback]
 		children     *Dependencies[*Task]
 
+		values atomic.Pointer[xsync.Map[any, any]]
+
 		mu sync.Mutex
 	}
 	Parent interface {
@@ -52,17 +56,52 @@ type (
 		Name() string
 		Finish(reason any)
 		OnCancel(name string, f func())
+		// SetValue sets a value in the task's context.
+		//
+		// This value will be available to all subtasks of the task.
+		//
+		// This method is thread-safe.
+		SetValue(key any, value any)
+		// GetValue gets a value from the task's context.
+		//
+		// It will search the value in the task's context, and then in the parent's context.
+		//
+		// This method is thread-safe.
+		GetValue(key any) any
 	}
 )
 
 const taskTimeout = 3 * time.Second
 
 func (t *Task) Context() context.Context {
-	return t.ctx
+	return ctxWithValues{task: t}
 }
 
 func (t *Task) Name() string {
 	return t.name.Value()
+}
+
+func (t *Task) SetValue(key any, value any) {
+	values := t.values.Load()
+	if values == nil {
+		// only initialize once
+		t.values.CompareAndSwap(nil, xsync.NewMap[any, any](xsync.WithGrowOnly()))
+		values = t.values.Load()
+	}
+	values.Store(key, value)
+}
+
+func (t *Task) GetValue(key any) any {
+	if values := t.values.Load(); values != nil {
+		v, ok := values.Load(key)
+		if ok {
+			return v
+		}
+	}
+	if t.parent != root {
+		return t.parent.GetValue(key)
+	}
+	return nil
 }
 
 // String returns the full name of the task.
