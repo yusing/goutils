@@ -477,7 +477,7 @@ retry:
 
 	if p.AccessLogger != nil {
 		defer func() {
-			p.AccessLogger.Log(req, res)
+			p.AccessLogger.LogRequest(req, res)
 		}()
 	}
 
