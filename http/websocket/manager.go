@@ -105,7 +105,7 @@ func NewManagerWithUpgrade(c *gin.Context) (*Manager, error) {
 	cm.lastPingTime.Store(time.Now())
 
 	conn.SetCloseHandler(func(code int, text string) error {
-		if envDebug {
+		if envDebug && code != websocket.CloseNormalClosure && code != websocket.CloseGoingAway {
 			cm.setErrIfNil(fmt.Errorf("connection closed: code=%d, text=%s", code, text))
 		}
 		cm.Close()
