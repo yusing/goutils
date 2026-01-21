@@ -2,6 +2,6 @@
 
 package pool
 
-func (p Pool[T]) checkExists(key string) {
+func (*Pool[T]) checkExists(string) {
 	// no-op in production
 }
