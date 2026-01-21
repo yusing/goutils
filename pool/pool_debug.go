@@ -9,7 +9,7 @@ import (
 )
 
 func (p *Pool[T]) checkExists(key string) {
-	if _, ok := p.m.Load(key); ok {
+	if cur, ok := p.m.Load(key); ok && !cur.tomb {
 		log.Warn().Msgf("%s: key %s already exists\nstacktrace: %s", p.name, key, string(debug.Stack()))
 	}
 }
