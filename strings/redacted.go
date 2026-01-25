@@ -32,6 +32,9 @@ func (r *Redacted) UnmarshalJSON(data []byte) error {
 }
 
 func Redact(s string) string {
+	if len(s) == 0 {
+		return ""
+	}
 	if len(s) <= 4 {
 		return s[:1] + "**" + s[len(s)-1:]
 	}
