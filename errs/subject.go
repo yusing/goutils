@@ -53,7 +53,7 @@ func PrependSubject(subject string, err error) Error {
 	case Error:
 		return err.Subject(subject)
 	}
-	return wrap(&withSubject{[]string{subject}, err, ""})
+	return wrap(&withSubject{[]string{subject}, wrap(err), ""})
 }
 
 func (err *withSubject) Prepend(subject string) *withSubject {
