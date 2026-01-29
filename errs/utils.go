@@ -2,7 +2,9 @@ package gperr
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 )
 
@@ -59,6 +61,15 @@ func Unwrap(err error) Error {
 	}
 }
 
+var (
+	// errors.errorString
+	errorStringType = reflect.TypeOf(errors.New(""))
+	// fmt.wrapError
+	wrapErrorType = reflect.TypeOf(fmt.Errorf("foo: %w", errors.New("bar")))
+	// fmt.wrapErrors
+	wrapErrorsType = reflect.TypeOf(fmt.Errorf("foo: %w, bar: %w", errors.New("bar"), errors.New("baz")))
+)
+
 func wrap(err error) Error {
 	if err == nil {
 		return nil
@@ -67,6 +78,11 @@ func wrap(err error) Error {
 	switch err := err.(type) {
 	case Error:
 		return err
+	}
+	switch reflect.TypeOf(err) {
+	case errorStringType, wrapErrorType, wrapErrorsType:
+		// prevent unwrapping causing MarshalJSON to resulting in {} or empty string
+		return baseError{noUnwrap{err}}
 	}
 	return baseError{err}
 }
