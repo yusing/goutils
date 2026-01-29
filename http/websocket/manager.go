@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bytedance/sonic"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
@@ -189,7 +188,7 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 // If the connection is closed, the error is returned.
 // If the write timeout is reached, ErrWriteTimeout is returned.
 func (cm *Manager) WriteJSON(data any, timeout time.Duration) error {
-	bytes, err := sonic.Marshal(data)
+	bytes, err := json.Marshal(data)
 	if err != nil {
 		return err
 	}
