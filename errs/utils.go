@@ -1,6 +1,7 @@
 package gperr
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 )
@@ -16,8 +17,16 @@ func New(message string) Error {
 	return baseError{newError(message)}
 }
 
+type noUnwrap struct {
+	error
+}
+
+func (e noUnwrap) MarshalJSON() ([]byte, error) {
+	return json.Marshal(e.Error())
+}
+
 func Errorf(format string, args ...any) Error {
-	return baseError{fmt.Errorf(format, args...)}
+	return baseError{noUnwrap{fmt.Errorf(format, args...)}}
 }
 
 // Wrap wraps message in front of the error message.

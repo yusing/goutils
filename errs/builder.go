@@ -72,7 +72,7 @@ func (b *Builder) Adds(err string) {
 
 func (b *Builder) Addf(format string, args ...any) {
 	if len(args) > 0 {
-		b.errs = append(b.errs, fmt.Errorf(format, args...))
+		b.errs = append(b.errs, Errorf(format, args...))
 	} else {
 		b.Adds(format)
 	}

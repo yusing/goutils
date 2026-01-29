@@ -38,6 +38,10 @@ type MarkdownError interface {
 //nolint:errname
 type errStr string
 
+func (err errStr) MarshalText() ([]byte, error) {
+	return []byte(err), nil
+}
+
 func (err errStr) Error() string {
 	return string(err)
 }

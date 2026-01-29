@@ -38,7 +38,7 @@ func (err nestedError) With(extra error) Error {
 
 func (err nestedError) Withf(format string, args ...any) Error {
 	if len(args) > 0 {
-		err.Extras = append(err.Extras, fmt.Errorf(format, args...))
+		err.Extras = append(err.Extras, Errorf(format, args...))
 	} else {
 		err.Extras = append(err.Extras, newError(format))
 	}

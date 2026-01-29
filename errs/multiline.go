@@ -234,7 +234,7 @@ func (m *MultilineError) AddLines(lines ...any) *MultilineError {
 		case error:
 			m.add(v)
 		default:
-			m.add(fmt.Errorf("%v", v))
+			m.add(Errorf("%v", v))
 		}
 	}
 	return m
