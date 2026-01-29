@@ -5,6 +5,7 @@ go 1.25.6
 replace github.com/yusing/goutils => ../..
 
 require (
+	github.com/bytedance/sonic v1.15.0
 	github.com/gin-gonic/gin v1.11.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
@@ -14,7 +15,6 @@ require (
 
 require (
 	github.com/bytedance/gopkg v0.1.3 // indirect
-	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.12 // indirect
