@@ -44,7 +44,7 @@ func (err baseError) With(extra error) Error {
 }
 
 func (err baseError) Withf(format string, args ...any) Error {
-	return &nestedError{&err, []error{fmt.Errorf(format, args...)}}
+	return &nestedError{&err, []error{Errorf(format, args...)}}
 }
 
 func (err baseError) Error() string {

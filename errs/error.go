@@ -9,7 +9,7 @@ type Error interface {
 	Is(other error) bool
 	// With appends a sub-error to the error.
 	With(extra error) Error
-	// Withf is a wrapper for With(fmt.Errorf(format, args...)).
+	// Withf is a wrapper for With(Errorf(format, args...)).
 	Withf(format string, args ...any) Error
 	// Subject prepends the given subject with a colon and space to the error message.
 	//
