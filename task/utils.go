@@ -40,6 +40,23 @@ func testCleanup() {
 	initRoot()
 }
 
+// NewTestTask returns a new Task for testing.
+//
+// It should be uses as a parent task for other tasks.
+func NewTestTask[Test interface {
+	Name() string
+	Context() context.Context
+}](t Test) *Task {
+	ctx, cancel := context.WithCancelCause(t.Context())
+	return &Task{
+		name:         intern.Make(t.Name()),
+		ctx:          ctx,
+		cancel:       cancel,
+		done:         closedCh,
+		finishCalled: false,
+	}
+}
+
 // RootTask returns a new Task with the given name, derived from the root context.
 //
 //go:inline
