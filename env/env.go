@@ -29,7 +29,7 @@ func LookupEnv(key string) (string, bool) {
 	var hasEnv bool
 	for _, prefix := range envPrefixes {
 		value, ok := os.LookupEnv(prefix + key)
-		if ok  {
+		if ok {
 			hasEnv = true
 			if value != "" {
 				return value, true
@@ -83,9 +83,6 @@ func GetAddrEnv(key, defaultValue, scheme string) (addr, host string, portInt in
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		log.Panicf("env %s: invalid address: %s", key, addr)
-	}
-	if host == "" {
-		host = "localhost"
 	}
 	fullURL = fmt.Sprintf("%s://%s:%s", scheme, host, port)
 	portInt, err = strconv.Atoi(port)

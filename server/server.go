@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -67,10 +68,10 @@ var (
 	envHTTP3Enabled = env.GetEnvBool("HTTP3_ENABLED", false)
 )
 
-func StartServer(parent task.Parent, opt Options) (s *Server) {
+func StartServer(parent task.Parent, opt Options) (s *Server, err error) {
 	s = NewServer(opt)
-	s.Start(parent, envHTTP3Enabled)
-	return s
+	err = s.Start(parent, envHTTP3Enabled)
+	return s, err
 }
 
 func NewServer(opt Options) (s *Server) {
@@ -119,10 +120,12 @@ func NewServer(opt Options) (s *Server) {
 //
 // If both are not set, this does nothing.
 //
-// Start() is non-blocking.
-func (s *Server) Start(parent task.Parent, http3Enabled bool) {
+// Start() is non-blocking if no error is returned.
+//
+// If an error occurs, it will wait for started servers to finish and return the error.
+func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 	taskName := func(proto string) string {
-		return "server." + s.Name + "." + proto
+		return s.Name + "." + proto
 	}
 	s.startTime = time.Now()
 
@@ -138,7 +141,11 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) {
 				TLSConfig: http3.ConfigureTLSConfig(s.https.TLSConfig),
 			}
 			subtask := parent.Subtask(taskName("http3"), true)
-			Start(subtask, h3, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+			_, err := Start(subtask, h3, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+			if err != nil {
+				subtask.Finish(err)
+				return fmt.Errorf("failed to start HTTP/3 server: %w", err)
+			}
 			if s.http != nil {
 				s.http.Handler = advertiseHTTP3(s.http.Handler, h3)
 			}
@@ -147,8 +154,20 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) {
 		}
 	}
 
-	Start(parent.Subtask(taskName("http"), true), s.http, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
-	Start(parent.Subtask(taskName("https"), true), s.https, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	subtask := parent.Subtask(taskName("http"), true)
+	_, err := Start(subtask, s.http, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	if err != nil {
+		subtask.Finish(err)
+		return fmt.Errorf("failed to start HTTP server: %w", err)
+	}
+
+	subtask = parent.Subtask(taskName("https"), true)
+	_, err = Start(subtask, s.https, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	if err != nil {
+		subtask.Finish(err)
+		return fmt.Errorf("failed to start HTTPS server: %w", err)
+	}
+	return nil
 }
 
 type ServerStartOptions struct {
@@ -194,9 +213,9 @@ func WithProxyProtocolSupport(value bool) ServerStartOption {
 	}
 }
 
-func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStartOption) (port int) {
+func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStartOption) (port int, err error) {
 	if srv == nil {
-		return port
+		return port, nil
 	}
 
 	var opts ServerStartOptions
@@ -223,8 +242,7 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 		}
 		l, err := lc.Listen(task.Context(), "tcp", srv.Addr)
 		if err != nil {
-			HandleError(opts.logger, err, "failed to listen on port")
-			return port
+			return port, err
 		}
 		port = l.Addr().(*net.TCPAddr).Port
 		if opts.proxyProto {
@@ -247,8 +265,7 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 	case *http3.Server:
 		l, err := lc.ListenPacket(task.Context(), "udp", srv.Addr)
 		if err != nil {
-			HandleError(opts.logger, err, "failed to listen on port")
-			return port
+			return port, err
 		}
 		port = l.LocalAddr().(*net.UDPAddr).Port
 		for _, wrapper := range opts.udpWrappers {
@@ -263,11 +280,11 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 	go func() {
 		err := convertError(serveFunc())
 		if err != nil {
-			HandleError(opts.logger, err, "failed to serve "+proto+" server")
+			opts.logger.Err(err).Msg("failed to serve " + proto + " server")
 		}
 		task.Finish(err)
 	}()
-	return port
+	return port, nil
 }
 
 func stop[Server httpServer](srv Server, l io.Closer, proto string, logger *zerolog.Logger) {
@@ -279,7 +296,7 @@ func stop[Server httpServer](srv Server, l io.Closer, proto string, logger *zero
 	defer cancel()
 
 	if err := convertError(errors.Join(srv.Shutdown(ctx), l.Close())); err != nil {
-		HandleError(logger, err, "failed to shutdown "+proto+" server")
+		logger.Err(err).Msg("failed to shutdown " + proto + " server")
 	} else {
 		logger.Info().Str("proto", proto).Str("addr", addr(srv)).Msg("server stopped")
 	}

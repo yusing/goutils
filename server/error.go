@@ -5,8 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-
-	"github.com/rs/zerolog"
 )
 
 func convertError(err error) error {
@@ -16,8 +14,4 @@ func convertError(err error) error {
 	default:
 		return err
 	}
-}
-
-func HandleError(logger *zerolog.Logger, err error, msg string) {
-	logger.Fatal().Err(err).Msg(msg)
 }
