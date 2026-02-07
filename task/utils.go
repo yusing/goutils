@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"testing"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -40,21 +42,39 @@ func testCleanup() {
 	initRoot()
 }
 
-// NewTestTask returns a new Task for testing.
+var (
+	testTasks   = make(map[testing.TB]*Task)
+	testTasksMu sync.Mutex
+)
+
+// GetTestTask returns the existing or a new Task for testing.
 //
 // It should be uses as a parent task for other tasks.
-func NewTestTask[Test interface {
-	Name() string
-	Context() context.Context
-}](t Test) *Task {
+func GetTestTask(t testing.TB) *Task {
+	testTasksMu.Lock()
+	defer testTasksMu.Unlock()
+
+	if task, ok := testTasks[t]; ok {
+		return task
+	}
+
 	ctx, cancel := context.WithCancelCause(t.Context())
-	return &Task{
+	task := &Task{
+		parent:       root,
 		name:         intern.Make(t.Name()),
 		ctx:          ctx,
 		cancel:       cancel,
 		done:         closedCh,
 		finishCalled: false,
 	}
+	testTasks[t] = task
+
+	t.Cleanup(func() {
+		testTasksMu.Lock()
+		defer testTasksMu.Unlock()
+		delete(testTasks, t)
+	})
+	return task
 }
 
 // RootTask returns a new Task with the given name, derived from the root context.

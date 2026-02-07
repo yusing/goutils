@@ -9,14 +9,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testTask() *Task {
-	return RootTask("test", true)
+func TestGetTestTask(t *testing.T) {
+	t1 := GetTestTask(t)
+	t2 := GetTestTask(t)
+	require.NotNil(t, t1)
+	require.Equal(t, t1, t2)
 }
 
 func TestChildTaskCancellation(t *testing.T) {
 	t.Cleanup(testCleanup)
 
-	parent := testTask()
+	parent := RootTask("test", true)
 	child := parent.Subtask("", true)
 
 	go func() {
@@ -43,7 +46,7 @@ func TestChildTaskCancellation(t *testing.T) {
 
 func TestTaskStuck(t *testing.T) {
 	t.Cleanup(testCleanup)
-	task := testTask()
+	task := RootTask("test", true)
 	task.OnCancel("second", func() {
 		time.Sleep(time.Second)
 	})
@@ -68,7 +71,7 @@ func TestTaskStuck(t *testing.T) {
 
 func TestTaskOnCancelOnFinished(t *testing.T) {
 	t.Cleanup(testCleanup)
-	task := testTask()
+	task := RootTask("test", true)
 
 	var shouldTrueOnCancel bool
 	var shouldTrueOnFinish bool
@@ -88,7 +91,7 @@ func TestTaskOnCancelOnFinished(t *testing.T) {
 
 func TestCommonFlowWithGracefulShutdown(t *testing.T) {
 	t.Cleanup(testCleanup)
-	task := testTask()
+	task := RootTask("test", true)
 
 	finished := false
 
@@ -118,14 +121,14 @@ func TestCommonFlowWithGracefulShutdown(t *testing.T) {
 
 func TestTimeoutOnGracefulShutdown(t *testing.T) {
 	t.Cleanup(testCleanup)
-	_ = testTask()
+	_ = RootTask("test", true)
 
 	require.ErrorIs(t, gracefulShutdown(time.Millisecond), context.DeadlineExceeded)
 }
 
 func TestFinishMultipleCalls(t *testing.T) {
 	t.Cleanup(testCleanup)
-	task := testTask()
+	task := RootTask("test", true)
 	var wg sync.WaitGroup
 	n := 20
 	for range n {
@@ -146,7 +149,7 @@ func BenchmarkTasksNoFinish(b *testing.B) {
 
 func BenchmarkTasksNeedFinish(b *testing.B) {
 	for b.Loop() {
-		task := testTask()
+		task := RootTask("test", true)
 		task.Subtask("", true).Finish(nil)
 		task.Finish(nil)
 	}
