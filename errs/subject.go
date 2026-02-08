@@ -36,7 +36,7 @@ func noHighlight(subject string) string {
 	return subject
 }
 
-func PrependSubject(subject string, err error) Error {
+func PrependSubject[S ~string](err error, subject S) Error {
 	if err == nil {
 		return nil
 	}
@@ -44,16 +44,16 @@ func PrependSubject(subject string, err error) Error {
 	//nolint:errorlint
 	switch err := err.(type) {
 	case *withSubject:
-		return wrap(err.Prepend(subject))
+		return wrap(err.Prepend(string(subject)))
 	case *wrappedError:
 		return wrap(&wrappedError{
-			Err:     PrependSubject(subject, err.Err),
+			Err:     PrependSubject(err.Err, subject),
 			Message: err.Message,
 		})
 	case Error:
-		return err.Subject(subject)
+		return err.Subject(string(subject))
 	}
-	return wrap(&withSubject{[]string{subject}, wrap(err), ""})
+	return wrap(&withSubject{[]string{string(subject)}, wrap(err), ""})
 }
 
 func (err *withSubject) Prepend(subject string) *withSubject {

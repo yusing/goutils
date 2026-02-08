@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/puzpuzpuz/xsync/v4"
-	gperr "github.com/yusing/goutils/errs"
 	"github.com/yusing/goutils/intern"
 )
 
@@ -17,7 +16,7 @@ type (
 		// and returns an error if it fails to start.
 		//
 		// callerSubtask.Finish must be called when start fails or the object is finished.
-		Start(parent Parent) gperr.Error
+		Start(parent Parent) error
 		Task() *Task
 	}
 	TaskFinisher interface {

@@ -25,7 +25,7 @@ func (err baseError) Is(other error) bool {
 }
 
 func (err baseError) Subject(subject string) Error {
-	err.Err = PrependSubject(subject, err.Err)
+	err.Err = PrependSubject(err.Err, subject)
 	return &err
 }
 

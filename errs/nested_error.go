@@ -15,9 +15,9 @@ var emptyError = errStr("")
 
 func (err nestedError) Subject(subject string) Error {
 	if err.Err == nil {
-		err.Err = PrependSubject(subject, emptyError)
+		err.Err = PrependSubject(emptyError, subject)
 	} else {
-		err.Err = PrependSubject(subject, err.Err)
+		err.Err = PrependSubject(err.Err, subject)
 	}
 	return &err
 }

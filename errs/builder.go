@@ -54,14 +54,21 @@ func (b *Builder) Add(err error) {
 	b.add(err)
 }
 
+func (b *Builder) AddSubject(err error, subject string) {
+	if err == nil {
+		return
+	}
+	b.add(PrependSubject(err, subject))
+}
+
 func (b *Builder) AddSubjectf(err error, format string, args ...any) {
 	if err == nil {
 		return
 	}
 	if len(args) > 0 {
-		err = PrependSubject(fmt.Sprintf(format, args...), err)
+		err = PrependSubject(err, fmt.Sprintf(format, args...))
 	} else {
-		err = PrependSubject(format, err)
+		err = PrependSubject(err, format)
 	}
 	b.add(err)
 }
