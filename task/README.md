@@ -128,7 +128,7 @@ Interface for objects that need to be started with a parent task.
 ```go
 type TaskStarter interface {
     // Start initializes the object and returns an error if it fails
-    Start(parent Parent) gperr.Error
+    Start(parent Parent) error
 
     // Task returns the task associated with this object
     Task() *Task
@@ -399,7 +399,6 @@ This package does not accept external configuration. All behavior is controlled 
 | Package                            | Purpose                              |
 | ---------------------------------- | ------------------------------------ |
 | `github.com/puzpuzpuz/xsync/v4`    | Concurrent-safe map for dependencies |
-| `github.com/yusing/goutils/errs`   | Error handling with gperr            |
 | `github.com/yusing/goutils/intern` | String interning for task names      |
 
 ## Observability
@@ -515,14 +514,14 @@ type Database struct {
     conn *sql.DB
 }
 
-func (d *Database) Start(parent task.Parent) gperr.Error {
+func (d *Database) Start(parent task.Parent) error {
     d.task = parent.Subtask("database", true)
 
     var err error
     d.conn, err = sql.Open("postgres", dsn)
     if err != nil {
         d.task.Finish(err)
-        return gperr.New().Subject("failed to open database").Wrap(err)
+        return err
     }
 
     go d.backgroundSync()
