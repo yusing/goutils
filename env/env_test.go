@@ -180,13 +180,13 @@ func TestGetAddrEnv(t *testing.T) {
 	assert.Equal(t, 8080, portInt)
 	assert.Equal(t, "https://example.com:8080", fullURL)
 
-	// Test localhost shorthand
+	// Test empty host
 	os.Setenv(key, ":3000")
 	addr, host, portInt, fullURL = GetAddrEnv(key, "", "http")
 	assert.Equal(t, ":3000", addr)
-	assert.Equal(t, "localhost", host)
+	assert.Empty(t, host)
 	assert.Equal(t, 3000, portInt)
-	assert.Equal(t, "http://localhost:3000", fullURL)
+	assert.Equal(t, "http://:3000", fullURL)
 
 	// Test IPv6 address
 	os.Setenv(key, "[::1]:8080")
