@@ -2,8 +2,10 @@ package strutils
 
 import "encoding/json"
 
-type MarshalerFunc func(value any) ([]byte, error)
-type UnmarshalerFunc func(data []byte, value any) error
+type (
+	MarshalerFunc   func(value any) ([]byte, error)
+	UnmarshalerFunc func(data []byte, value any) error
+)
 
 var (
 	jsonMarshaler   MarshalerFunc   = json.Marshal

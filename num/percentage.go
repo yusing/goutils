@@ -14,8 +14,10 @@ type Percentage struct {
 // Each table holds 128 evenly spaced values.
 // Two tables combined give 256 total intervals, and with careful spacing,
 // we can approximate or distribute ~1000 discrete levels total.
-var tableA [128]float64
-var tableB [128]float64
+var (
+	tableA [128]float64
+	tableB [128]float64
+)
 
 const tolerance = 0.200001
 

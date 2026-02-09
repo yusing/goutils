@@ -6,7 +6,6 @@ import (
 )
 
 func TestEncodingPrecision(t *testing.T) {
-
 	totalDiffs := 0.0
 	for i := 0.0; i <= 100.0; i += 0.1 {
 		p := NewPercentage(i)

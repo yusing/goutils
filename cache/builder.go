@@ -7,8 +7,10 @@ import (
 	"github.com/cenkalti/backoff/v5"
 )
 
-type CachedContextFunc[T any] func(ctx context.Context) (T, error)
-type CachedContextKeyFunc[T any, K comparable] func(ctx context.Context, key K) (T, error)
+type (
+	CachedContextFunc[T any]                  func(ctx context.Context) (T, error)
+	CachedContextKeyFunc[T any, K comparable] func(ctx context.Context, key K) (T, error)
+)
 
 type CachedFuncConfig struct {
 	retries int

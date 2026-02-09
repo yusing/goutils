@@ -67,10 +67,12 @@ func (err *nestedError) Is(other error) bool {
 	return false
 }
 
-var nilError = newError("<nil>")
-var bulletPrefix = []byte("• ")
-var markdownBulletPrefix = []byte("- ")
-var spaces = []byte("                            ")
+var (
+	nilError             = newError("<nil>")
+	bulletPrefix         = []byte("• ")
+	markdownBulletPrefix = []byte("- ")
+	spaces               = []byte("                            ")
+)
 
 type appendLineFunc func(buf []byte, err error, level int) []byte
 

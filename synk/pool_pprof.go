@@ -34,6 +34,7 @@ func addReused(size int) {
 	reused.num.Add(1)
 	reused.size.Add(uint64(size))
 }
+
 func addDropped(size int) {
 	dropped.num.Add(1)
 	dropped.size.Add(uint64(size))

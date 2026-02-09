@@ -10,6 +10,7 @@ import (
 )
 
 var bytesPool = synk.GetSizedBytesPool()
+
 var noContext context.Context
 
 func CopyCloseWithContext(ctx context.Context, dst io.Writer, src io.Reader, sizeHint int) (err error) {

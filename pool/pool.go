@@ -9,8 +9,10 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-const recentlyRemovedTTL = time.Second
-const tombPurgeThreshold = uint32(256)
+const (
+	recentlyRemovedTTL = time.Second
+	tombPurgeThreshold = uint32(256)
+)
 
 type removedInfo struct {
 	name      string

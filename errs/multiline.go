@@ -239,6 +239,7 @@ func (m *MultilineError) AddLines(lines ...any) *MultilineError {
 	}
 	return m
 }
+
 func countIndent(line string) (n int) {
 	for _, r := range line {
 		if !unicode.IsSpace(r) {

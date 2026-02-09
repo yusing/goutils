@@ -7,8 +7,10 @@ import (
 	"github.com/yusing/goutils/synk"
 )
 
-var bytesPool = synk.GetSizedBytesPool()
-var unsizedPool = synk.GetUnsizedBytesPool()
+var (
+	bytesPool   = synk.GetSizedBytesPool()
+	unsizedPool = synk.GetUnsizedBytesPool()
+)
 
 func noopRelease([]byte) {}
 
@@ -55,11 +57,6 @@ func readAll(size int, r io.Reader) (b []byte, release func([]byte), err error) 
 		b = b[:len(b)+n]
 		if err != nil {
 			if err == io.EOF {
-				if size > 0 && totalRead < size {
-					release(b)
-					return nil, nil, io.ErrUnexpectedEOF
-				}
-				err = nil
 				return b, release, nil
 			}
 			release(b)

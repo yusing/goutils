@@ -18,7 +18,7 @@ func escape(b []byte) {
 }
 
 func BenchmarkBytesPool_Get(b *testing.B) {
-	var sizes = make([]int, 0, SizedPools)
+	sizes := make([]int, 0, SizedPools)
 	for i := range SizedPools {
 		sizes = append(sizes, allocSize(i))
 	}

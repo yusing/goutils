@@ -35,7 +35,7 @@ func (w noopResponseWriter) WriteHeader(statusCode int) {
 
 func BenchmarkReverseProxy(b *testing.B) {
 	var w noopResponseWriter
-	var req = http.Request{
+	req := http.Request{
 		Method: "GET",
 		URL:    &url.URL{Scheme: "http", Host: "test"},
 		Body:   io.NopCloser(strings.NewReader("Hello, world!")),

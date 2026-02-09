@@ -10,8 +10,10 @@ type wrappedError struct {
 	Message string
 }
 
-var _ PlainError = (*wrappedError)(nil)
-var _ MarkdownError = (*wrappedError)(nil)
+var (
+	_ PlainError    = (*wrappedError)(nil)
+	_ MarkdownError = (*wrappedError)(nil)
+)
 
 func (e *wrappedError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Message, e.Err.Error())

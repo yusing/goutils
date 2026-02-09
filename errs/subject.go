@@ -21,8 +21,10 @@ const subjectSep = " > "
 
 type highlightFunc func(subject string) string
 
-var _ PlainError = (*withSubject)(nil)
-var _ MarkdownError = (*withSubject)(nil)
+var (
+	_ PlainError    = (*withSubject)(nil)
+	_ MarkdownError = (*withSubject)(nil)
+)
 
 func highlightANSI(subject string) string {
 	return ansi.HighlightRed + subject + ansi.Reset

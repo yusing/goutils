@@ -8,8 +8,10 @@ type Hint struct {
 	Suffix  string
 }
 
-var _ PlainError = (*Hint)(nil)
-var _ MarkdownError = (*Hint)(nil)
+var (
+	_ PlainError    = (*Hint)(nil)
+	_ MarkdownError = (*Hint)(nil)
+)
 
 func (h *Hint) Error() string {
 	return h.Prefix + ansi.Info(h.Message) + h.Suffix
