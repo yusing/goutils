@@ -27,6 +27,14 @@ func (e noUnwrap) MarshalJSON() ([]byte, error) {
 	return json.Marshal(e.Error())
 }
 
+func (e noUnwrap) Is(target error) bool {
+	return errors.Is(e.error, target)
+}
+
+func (e noUnwrap) As(target any) bool {
+	return errors.As(e.error, target)
+}
+
 func Errorf(format string, args ...any) Error {
 	return baseError{noUnwrap{fmt.Errorf(format, args...)}}
 }
