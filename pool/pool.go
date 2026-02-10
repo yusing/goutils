@@ -7,6 +7,7 @@ import (
 
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/rs/zerolog/log"
+	"github.com/yusing/goutils/events"
 )
 
 const (
@@ -186,6 +187,7 @@ func (p *Pool[T]) Slice() []T {
 }
 
 func (p *Pool[T]) logRemoved(info removedInfo) {
+	events.Global.Add(events.NewEvent(events.LevelInfo, "pool", "removed", info))
 	if p.disableLog.Load() {
 		return
 	}
@@ -197,6 +199,7 @@ func (p *Pool[T]) logRemoved(info removedInfo) {
 }
 
 func (p *Pool[T]) logAction(action string, obj T) {
+	events.Global.Add(events.NewEvent(events.LevelInfo, "pool", action, obj))
 	if p.disableLog.Load() {
 		return
 	}
