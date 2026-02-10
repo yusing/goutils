@@ -51,6 +51,14 @@ func (h *History) addToArrayLocked(event Event) {
 	}
 }
 
+func (h *History) Clear() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.events = [maxHistorySize]Event{}
+	h.index = 0
+	h.count = 0
+}
+
 func (h *History) listenersSnapshotLocked() []*listener {
 	h.listenersMu.RLock()
 	listeners := make([]*listener, 0, len(h.listeners))
