@@ -100,9 +100,7 @@ func (p UnsizedBytesPool) GetBuffer() *bytes.Buffer {
 }
 
 func (p UnsizedBytesPool) GetBufferAtLeast(size int) *bytes.Buffer {
-	b := bytes.NewBuffer(p.Get())
-	b.Grow(size)
-	return b
+	return bytes.NewBuffer(p.GetAtLeast(size))
 }
 
 func (p UnsizedBytesPool) PutBuffer(buf *bytes.Buffer) {
@@ -135,6 +133,15 @@ func (p UnsizedBytesPool) Get() []byte {
 			return make([]byte, 0, MinAllocSize)
 		}
 	}
+}
+
+func (p UnsizedBytesPool) GetAtLeast(n int) []byte {
+	b := p.Get()
+	if n <= cap(b) {
+		return b
+	}
+	// discard the buffer
+	return make([]byte, 0, n)
 }
 
 // GetSized returns a slice of the given size.
