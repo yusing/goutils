@@ -73,6 +73,9 @@ type (
 const taskTimeout = 3 * time.Second
 
 func (t *Task) Context() context.Context {
+	if t == nil {
+		panic("task is nil")
+	}
 	return ctxWithValues{task: t}
 }
 
@@ -91,6 +94,9 @@ func (t *Task) SetValue(key any, value any) {
 }
 
 func (t *Task) GetValue(key any) any {
+	if t == nil {
+		panic("task is nil")
+	}
 	if values := t.values.Load(); values != nil {
 		v, ok := values.Load(key)
 		if ok {
