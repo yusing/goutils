@@ -38,6 +38,7 @@ type (
 	Pool[T Object] struct {
 		m          *xsync.Map[string, entry[T]]
 		name       string
+		eventKey   string
 		disableLog atomic.Bool
 		tombs      atomic.Uint32
 	}
@@ -57,8 +58,8 @@ type (
 	}
 )
 
-func New[T Object](name string) *Pool[T] {
-	return &Pool[T]{m: xsync.NewMap[string, entry[T]](), name: name}
+func New[T Object](name, eventKey string) *Pool[T] {
+	return &Pool[T]{m: xsync.NewMap[string, entry[T]](), name: name, eventKey: eventKey}
 }
 
 func (p *Pool[T]) DisableLog(v bool) {
@@ -187,7 +188,7 @@ func (p *Pool[T]) Slice() []T {
 }
 
 func (p *Pool[T]) logRemoved(info removedInfo) {
-	events.Global.Add(events.NewEvent(events.LevelInfo, "pool", "removed", info))
+	events.Global.Add(events.NewEvent(events.LevelInfo, "pool."+p.eventKey, "removed", info))
 	if p.disableLog.Load() {
 		return
 	}
@@ -199,7 +200,7 @@ func (p *Pool[T]) logRemoved(info removedInfo) {
 }
 
 func (p *Pool[T]) logAction(action string, obj T) {
-	events.Global.Add(events.NewEvent(events.LevelInfo, "pool", action, obj))
+	events.Global.Add(events.NewEvent(events.LevelInfo, "pool."+p.eventKey, action, obj))
 	if p.disableLog.Load() {
 		return
 	}
