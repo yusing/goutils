@@ -1,11 +1,11 @@
 module github.com/yusing/goutils/server
 
-go 1.25.7
+go 1.26.0
 
 replace github.com/yusing/goutils => ../
 
 require (
-	github.com/pires/go-proxyproto v0.10.0
+	github.com/pires/go-proxyproto v0.11.0
 	github.com/quic-go/quic-go v0.59.0
 	github.com/rs/zerolog v1.34.0
 	github.com/samber/slog-zerolog/v2 v2.9.1

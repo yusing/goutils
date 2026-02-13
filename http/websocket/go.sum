@@ -81,8 +81,8 @@ github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS
 github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
 github.com/ugorji/go/codec v1.3.1 h1:waO7eEiFDwidsBN6agj1vJQ4AG7lh2yqXyOXqhgQuyY=
 github.com/ugorji/go/codec v1.3.1/go.mod h1:pRBVtBSKl77K30Bv8R2P+cLSGaTtex6fsA2Wjqmfxj4=
-github.com/yusing/gointernals v0.1.18 h1:ou8/0tPURUgAOBJu3TN/iWF4S/5ZYQaap+rVkaJNUMw=
-github.com/yusing/gointernals v0.1.18/go.mod h1:B/0FVXt4WPmgzVy3ynzkqKi+BSGaJVmwCJBRXYapo34=
+github.com/yusing/gointernals v0.2.0 h1:jyWB3kdUPkuU6s0r8QY/sS5h2WNBF4Kfisly8dtSVvg=
+github.com/yusing/gointernals v0.2.0/go.mod h1:xGzNbPGMm5Z8kG0t4JYISMscw+gMQlgghkLxlgRZv5Y=
 go.uber.org/mock v0.5.2 h1:LbtPTcP8A5k9WPXj54PPPbjcI4Y6lhyOZXn+VS7wNko=
 go.uber.org/mock v0.5.2/go.mod h1:wLlUxC2vVTPTaE3UD51E0BGOAElKrILxhVSDYQLld5o=
 golang.org/x/arch v0.24.0 h1:qlJ3M9upxvFfwRM51tTg3Yl+8CP9vCC1E7vlFpgv99Y=

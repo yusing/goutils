@@ -1,6 +1,6 @@
 module github.com/yusing/goutils/http/websocket
 
-go 1.25.7
+go 1.26.0
 
 replace github.com/yusing/goutils => ../..
 
@@ -8,7 +8,7 @@ require (
 	github.com/gin-gonic/gin v1.11.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.34.0
-	github.com/yusing/gointernals v0.1.18
+	github.com/yusing/gointernals v0.2.0
 	github.com/yusing/goutils v0.7.0
 )
 
