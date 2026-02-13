@@ -17,6 +17,7 @@ func ContainsFold(s, substr string) bool
 func IndexFold(s, substr string) int
 func ToLowerNoSnake(s string) string
 func LevenshteinDistance(a, b string) int
+func NewUUIDv7() string
 ```
 
 ### Formatting
