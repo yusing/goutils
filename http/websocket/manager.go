@@ -112,7 +112,16 @@ func NewManagerWithUpgrade(c *gin.Context) (*Manager, error) {
 		return nil
 	})
 
-	go cm.pingCheckRoutine()
+	// only allow disabling ping in debug mode
+	var noPing bool
+	if gin.Mode() == gin.DebugMode {
+		if v, _ := c.GetQuery("no-ping"); v == "true" || v == "1" {
+			cm.pingCheckTicker.Stop()
+		}
+	}
+	if !noPing {
+		go cm.pingCheckRoutine()
+	}
 	go cm.readRoutine()
 
 	// Ensure resources are released when parent context is canceled.
