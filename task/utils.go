@@ -50,29 +50,29 @@ var (
 // GetTestTask returns the existing or a new Task for testing.
 //
 // It should be uses as a parent task for other tasks.
-func GetTestTask(t testing.TB) *Task {
+func GetTestTask(tb testing.TB) *Task {
 	testTasksMu.Lock()
 	defer testTasksMu.Unlock()
 
-	if task, ok := testTasks[t]; ok {
+	if task, ok := testTasks[tb]; ok {
 		return task
 	}
 
-	ctx, cancel := context.WithCancelCause(t.Context())
+	ctx, cancel := context.WithCancelCause(tb.Context())
 	task := &Task{
 		parent:       root,
-		name:         intern.Make(t.Name()),
+		name:         intern.Make(tb.Name()),
 		ctx:          ctx,
 		cancel:       cancel,
 		done:         closedCh,
 		finishCalled: false,
 	}
-	testTasks[t] = task
+	testTasks[tb] = task
 
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		testTasksMu.Lock()
 		defer testTasksMu.Unlock()
-		delete(testTasks, t)
+		delete(testTasks, tb)
 	})
 	return task
 }
