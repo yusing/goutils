@@ -43,6 +43,17 @@ func (h *History) Add(event Event) {
 	h.notifyListeners(event, listeners)
 }
 
+func (h *History) AddAll(events []Event) {
+	h.mu.Lock()
+	for _, event := range events {
+		h.addToArrayLocked(event)
+	}
+	listeners := h.listenersSnapshotLocked()
+	h.mu.Unlock()
+
+	h.notifyListenersAll(events, listeners)
+}
+
 func (h *History) addToArrayLocked(event Event) {
 	h.events[h.index] = event
 	h.index = (h.index + 1) % maxHistorySize
@@ -80,6 +91,26 @@ func (h *History) notifyListeners(event Event, listeners []*listener) {
 		case l.ch <- event:
 		default:
 			// channel full, drop event
+		}
+		l.mu.Unlock()
+	}
+}
+
+func (h *History) notifyListenersAll(events []Event, listeners []*listener) {
+	for _, l := range listeners {
+		l.mu.Lock()
+		if l.ch == nil { // channel is closed
+			l.mu.Unlock()
+			continue
+		}
+	nextListener:
+		for _, event := range events {
+			select {
+			case l.ch <- event:
+			default:
+				// channel full, drop events
+				continue nextListener
+			}
 		}
 		l.mu.Unlock()
 	}
