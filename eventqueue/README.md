@@ -1,4 +1,4 @@
-# Event Queue
+# goutils/eventqueue
 
 A generic, buffered event queue with batch processing and configurable flush intervals.
 

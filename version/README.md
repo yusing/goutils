@@ -1,4 +1,4 @@
-# version
+# goutils/version
 
 Version utilities for semantic versioning with parsing and comparison.
 

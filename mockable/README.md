@@ -1,4 +1,4 @@
-# mockable
+# goutils/mockable
 
 Mockable interface utilities for testing.
 

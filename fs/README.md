@@ -1,4 +1,4 @@
-# fs
+# goutils/fs
 
 Filesystem utilities for directory traversal and file listing.
 

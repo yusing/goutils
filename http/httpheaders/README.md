@@ -1,4 +1,4 @@
-# httpheaders
+# goutils/http/httpheaders
 
 HTTP headers utilities for proxy and middleware applications.
 

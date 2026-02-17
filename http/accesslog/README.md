@@ -1,4 +1,4 @@
-# accesslog
+# goutils/http/accesslog
 
 HTTP access logging interface for recording request and response details.
 

@@ -1,4 +1,4 @@
-# num
+# goutils/num
 
 Number utilities including percentage type.
 

@@ -1,4 +1,4 @@
-# ansi
+# goutils/strutils/ansi
 
 ANSI color code utilities for terminal output formatting.
 

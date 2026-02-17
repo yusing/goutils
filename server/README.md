@@ -1,4 +1,4 @@
-# server
+# goutils/server
 
 Server utilities for HTTP/HTTPS/HTTP3 server management.
 

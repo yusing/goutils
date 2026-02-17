@@ -1,4 +1,4 @@
-# intern
+# goutils/intern
 
 Internal string handling using unique handles for memory efficiency.
 

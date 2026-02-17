@@ -1,4 +1,4 @@
-# io
+# goutils/io
 
 IO utilities for copying data with context support and buffer pooling.
 

@@ -1,4 +1,4 @@
-# pool
+# goutils/pool
 
 Thread-safe object pool for managing collections of objects with string keys.
 

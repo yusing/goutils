@@ -1,4 +1,4 @@
-# strings
+# goutils/strutils
 
 String utilities for manipulation, formatting, and parsing.
 

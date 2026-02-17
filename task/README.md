@@ -1,4 +1,4 @@
-# task
+# goutils/task
 
 Task utility package for managing object lifetimes with hierarchical subtasks, callbacks, and graceful shutdown.
 
@@ -87,6 +87,7 @@ type Task struct {
 ```
 
 **Invariants:**
+
 - A task can only be finished once (idempotent Finish calls)
 - All subtasks finish before parent OnFinished callbacks execute
 - OnCancel callbacks execute immediately when context is done
@@ -461,11 +462,13 @@ No metrics are currently exported.
 ### Stuck Task Detection
 
 When `FinishAndWait` or `WaitExit` exceeds the 3-second timeout, the package logs a warning containing:
+
 - Task name and hierarchy
 - Names of all stuck callbacks
 - Names of all stuck child tasks
 
 Example log output:
+
 ```
 WARN | my-app stucked callbacks: 2, stucked children: 1
 ```

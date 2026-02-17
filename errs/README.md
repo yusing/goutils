@@ -1,4 +1,4 @@
-# gperr
+# goutils/errs
 
 gperr is an error interface that supports nested structure and subject highlighting.
 

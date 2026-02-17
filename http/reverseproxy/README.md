@@ -1,4 +1,4 @@
-# reverseproxy
+# goutils/http/reverseproxy
 
 Enhanced HTTP reverse proxy with WebSocket and HTTP/2 support, integrated with godoxy's logging and access control systems.
 

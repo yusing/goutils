@@ -1,4 +1,4 @@
-# http
+# goutils/http
 
 HTTP utilities for request/response handling, reverse proxy, and WebSocket support.
 

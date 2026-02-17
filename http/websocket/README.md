@@ -1,4 +1,4 @@
-# websocket
+# goutils/http/websocket
 
 WebSocket connection manager with automatic ping-pong, JSON messaging, and periodic updates.
 

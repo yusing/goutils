@@ -1,4 +1,4 @@
-# synk/pool
+# goutils/synk
 
 A pool of bytes buffers that are reused instead of allocated and freed.
 
