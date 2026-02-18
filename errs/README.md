@@ -28,7 +28,7 @@ err = err.Subject("foo")
 
 Output:
 
-<code>foo > <span style="color: red;">bar</span>: error message</code>
+<code>foo > <span className="text-red-400">bar</span>: error message</code>
 
 ### gperr.Error.Subjectf
 
@@ -46,7 +46,7 @@ err = gperr.PrependSubject(err, "bar")
 
 Output:
 
-<code>bar > <span style="color: red;">foo</span>: error message</code>
+<code>bar > <span className="text-red-400">foo</span>: error message</code>
 
 ### gperr.Error.With
 
