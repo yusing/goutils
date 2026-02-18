@@ -19,6 +19,14 @@ func IndexFold(s, substr string) int {
 	return strings.Index(strings.ToLower(s), strings.ToLower(substr))
 }
 
+func HasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
+func HasSuffixFold(s, suffix string) bool {
+	return len(s) >= len(suffix) && strings.EqualFold(s[len(s)-len(suffix):], suffix)
+}
+
 func ToLowerNoSnake(s string) string {
 	var buf strings.Builder
 	for _, r := range s {
