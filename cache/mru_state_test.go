@@ -243,7 +243,7 @@ func TestCachedContextKeyFuncState_ConcurrentAccessMultipleKeys(t *testing.T) {
 	keys := []int{1, 2, 3}
 
 	// Launch multiple goroutines concurrently for different keys
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()

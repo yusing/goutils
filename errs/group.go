@@ -21,13 +21,11 @@ func NewGroup(context string) Group {
 // Go runs a function in a goroutine and adds the error to the Group.
 func (g *Group) Go(fn func() error) {
 	// not using wg.Go here to avoid wrapping fn twice
-	g.wg.Add(1)
-	go func() {
-		defer g.wg.Done()
+	g.wg.Go(func() {
 		if err := fn(); err != nil {
 			g.Add(err)
 		}
-	}()
+	})
 }
 
 // Add adds an error to the Group.

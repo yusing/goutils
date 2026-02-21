@@ -10,7 +10,7 @@ type Parser interface {
 
 func Parse[T Parser](from string) (t T, err error) {
 	tt := reflect.TypeOf(t)
-	if tt.Kind() == reflect.Ptr {
+	if tt.Kind() == reflect.Pointer {
 		t = reflect.New(tt.Elem()).Interface().(T)
 	}
 	err = t.Parse(from)

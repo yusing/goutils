@@ -187,7 +187,7 @@ func TestCachedFuncState_ConcurrentAccess(t *testing.T) {
 	errs := make([]error, 10)
 
 	// Launch multiple goroutines concurrently
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
@@ -198,7 +198,7 @@ func TestCachedFuncState_ConcurrentAccess(t *testing.T) {
 	wg.Wait()
 
 	// All calls should have the same result
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		assert.NoError(t, errs[i])
 		assert.Equal(t, 42, results[i])
 	}

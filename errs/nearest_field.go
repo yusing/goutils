@@ -15,18 +15,18 @@ func NearestField(input string, s any) string {
 		fields = s
 	default:
 		t := reflect.TypeOf(s)
-		if t.Kind() == reflect.Ptr {
+		if t.Kind() == reflect.Pointer {
 			t = t.Elem()
 		}
 		switch t.Kind() {
 		case reflect.Struct:
 			fields = make([]string, 0)
-			for i := range t.NumField() {
-				jsonTag, ok := t.Field(i).Tag.Lookup("json")
+			for field := range t.Fields() {
+				jsonTag, ok := field.Tag.Lookup("json")
 				if ok {
 					fields = append(fields, jsonTag)
 				} else {
-					fields = append(fields, t.Field(i).Name)
+					fields = append(fields, field.Name)
 				}
 			}
 		case reflect.Map:

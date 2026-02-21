@@ -1,6 +1,7 @@
 package httpheaders
 
 import (
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -97,9 +98,7 @@ func TestAppendCSP(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a test request with initial headers
 			req := httptest.NewRequest(http.MethodGet, "/", nil)
-			for header, values := range tc.initialHeaders {
-				req.Header[header] = values
-			}
+			maps.Copy(req.Header, tc.initialHeaders)
 
 			// Create a test response recorder
 			w := httptest.NewRecorder()
@@ -128,8 +127,8 @@ func TestAppendCSP(t *testing.T) {
 			// Parse the CSP response and verify each directive
 			foundDirectives := make(map[string]string)
 			for _, cspValue := range cspValues {
-				parts := strings.Split(cspValue, ";")
-				for _, part := range parts {
+				parts := strings.SplitSeq(cspValue, ";")
+				for part := range parts {
 					part = strings.TrimSpace(part)
 					if part == "" {
 						continue
