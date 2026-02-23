@@ -1,6 +1,7 @@
 package gperr
 
 import (
+	"errors"
 	"fmt"
 )
 
@@ -74,7 +75,7 @@ func (b *Builder) AddSubjectf(err error, format string, args ...any) {
 }
 
 func (b *Builder) Adds(err string) {
-	b.errs = append(b.errs, newError(err))
+	b.errs = append(b.errs, errors.New(err))
 }
 
 func (b *Builder) Addf(format string, args ...any) {

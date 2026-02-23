@@ -8,15 +8,11 @@ import (
 	"slices"
 )
 
-func newError(message string) error {
-	return errStr(message)
-}
-
 func New(message string) Error {
 	if message == "" {
 		return nil
 	}
-	return baseError{newError(message)}
+	return baseError{errors.New(message)}
 }
 
 type noUnwrap struct {
@@ -116,13 +112,13 @@ func Join(errors ...error) Error {
 	return &nestedError{Extras: errs}
 }
 
-func JoinLines(main error, errors ...string) Error {
-	errs := make([]error, len(errors))
-	for i, err := range errors {
-		if err == "" {
+func JoinLines(main error, lines ...string) Error {
+	errs := make([]error, len(lines))
+	for i, line := range lines {
+		if line == "" {
 			continue
 		}
-		errs[i] = newError(err)
+		errs[i] = errors.New(line)
 	}
 	return &nestedError{Err: main, Extras: errs}
 }

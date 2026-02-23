@@ -11,7 +11,7 @@ type nestedError struct {
 	Extras []error `json:"extras"`
 }
 
-var emptyError = errStr("")
+var emptyError = errors.New("")
 
 func (err nestedError) Subject(subject string) Error {
 	if err.Err == nil {
@@ -40,7 +40,7 @@ func (err nestedError) Withf(format string, args ...any) Error {
 	if len(args) > 0 {
 		err.Extras = append(err.Extras, Errorf(format, args...))
 	} else {
-		err.Extras = append(err.Extras, newError(format))
+		err.Extras = append(err.Extras, errors.New(format))
 	}
 	return &err
 }
@@ -68,7 +68,7 @@ func (err *nestedError) Is(other error) bool {
 }
 
 var (
-	nilError             = newError("<nil>")
+	nilError             = errors.New("<nil>")
 	bulletPrefix         = []byte("• ")
 	markdownBulletPrefix = []byte("- ")
 	spaces               = []byte("                            ")

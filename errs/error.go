@@ -31,17 +31,3 @@ type PlainError interface {
 type MarkdownError interface {
 	Markdown() []byte
 }
-
-// this makes JSON marshaling work,
-// as the builtin one doesn't.
-//
-//nolint:errname
-type errStr string
-
-func (err errStr) MarshalText() ([]byte, error) {
-	return []byte(err), nil
-}
-
-func (err errStr) Error() string {
-	return string(err)
-}
