@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 )
 
@@ -20,10 +21,11 @@ type (
 )
 
 const (
-	cacheKeyQueries   = "queries"
-	cacheKeyCookies   = "cookies"
-	cacheKeyRemoteIP  = "remote_ip"
-	cacheKeyBasicAuth = "basic_auth"
+	cacheKeyQueries    = "queries"
+	cacheKeyCookies    = "cookies"
+	cacheKeyCookiesMap = "cookies_map"
+	cacheKeyRemoteIP   = "remote_ip"
+	cacheKeyBasicAuth  = "basic_auth"
 )
 
 var cachePool = sync.Pool{
@@ -71,9 +73,39 @@ func (c Cache) GetCookies(r *http.Request) []*http.Cookie {
 	return v.([]*http.Cookie)
 }
 
+func (c Cache) GetCookiesMap(r *http.Request) url.Values {
+	v, ok := c[cacheKeyCookiesMap]
+	if !ok {
+		vv := make(url.Values)
+		for _, cookie := range c.GetCookies(r) {
+			vv[cookie.Name] = joinCookieValues(vv[cookie.Name], cookie.Value)
+		}
+		c[cacheKeyCookiesMap] = vv
+		return vv
+	}
+	return v.(url.Values)
+}
+
+func joinCookieValues(cookies []string, newCookie string) []string {
+	nNew := strings.Count(newCookie, ";")
+	if nNew == 0 {
+		return append(cookies, newCookie)
+	}
+	values := make([]string, 0, nNew)
+	for value := range strings.SplitSeq(newCookie, ";") {
+		values = append(values, strings.TrimSpace(value))
+	}
+	return values
+}
+
 func (c Cache) UpdateCookies(r *http.Request, update UpdateFunc[[]*http.Cookie]) {
 	cookies := update(c.GetCookies(r))
 	c[cacheKeyCookies] = cookies
+	cookiesMap := make(url.Values)
+	for _, cookie := range cookies {
+		cookiesMap[cookie.Name] = joinCookieValues(cookiesMap[cookie.Name], cookie.Value)
+	}
+	c[cacheKeyCookiesMap] = cookiesMap
 	r.Header.Del("Cookie")
 	for _, cookie := range cookies {
 		r.AddCookie(cookie)
