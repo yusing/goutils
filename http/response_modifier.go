@@ -135,6 +135,29 @@ func (rm *ResponseModifier) BufPool() synk.UnsizedBytesPool {
 	return rm.bufPool
 }
 
+func (rm *ResponseModifier) HasStatus() bool {
+	return rm.statusCode != 0
+}
+
+func (rm *ResponseModifier) HasBody() bool {
+	return rm.buf != nil && rm.buf.Len() > 0
+}
+
+func (rm *ResponseModifier) SharedData() Cache {
+	if rm.shared == nil {
+		rm.shared = NewCache()
+	}
+	return rm.shared
+}
+
+func (rm *ResponseModifier) BodyBuffer() *bytes.Buffer {
+	if rm.buf == nil {
+		rm.buf = rm.bufPool.GetBuffer()
+	}
+	rm.bodyModified = true
+	return rm.buf
+}
+
 // func (rm *ResponseModifier) Unwrap() http.ResponseWriter {
 // 	return rm.w
 // }
@@ -227,6 +250,9 @@ func (rm *ResponseModifier) Write(b []byte) (int, error) {
 		return 0, nil
 	}
 
+	if rm.statusCode == 0 {
+		rm.statusCode = http.StatusOK
+	}
 	rm.bodyModified = true
 	if rm.buf == nil {
 		origContentLength := int(rm.origContentLength)
@@ -271,10 +297,10 @@ func (rm *ResponseModifier) FlushRelease() (int, error) {
 				nn, werr := rm.w.Write(content)
 				n += nn
 				if werr != nil {
-					rm.errs.Addf("write error: %w", werr)
+					rm.AppendError("write error: %w", werr)
 				}
 				if err := http.NewResponseController(rm.w).Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-					rm.errs.Addf("flush error: %w", err)
+					rm.AppendError("flush error: %w", err)
 				}
 			}
 		}
