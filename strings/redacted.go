@@ -27,11 +27,23 @@ func (r Redacted) MarshalYAML() ([]byte, error) {
 }
 
 func (r *Redacted) UnmarshalJSON(data []byte) error {
-	return UnmarshalJSON(data, &r)
+	var s string
+	err := UnmarshalJSON(data, &s)
+	if err != nil {
+		return err
+	}
+	*r = Redacted(s)
+	return nil
 }
 
 func (r *Redacted) UnmarshalYAML(data []byte) error {
-	return UnmarshalYAML(data, &r)
+	var s string
+	err := UnmarshalYAML(data, &s)
+	if err != nil {
+		return err
+	}
+	*r = Redacted(s)
+	return nil
 }
 
 func Redact(s string) string {
