@@ -295,7 +295,9 @@ func stop[Server httpServer](srv Server, l io.Closer, proto string, logger *zero
 	ctx, cancel := context.WithTimeout(task.RootContext(), 1*time.Second)
 	defer cancel()
 
-	if err := convertError(errors.Join(srv.Shutdown(ctx), l.Close())); err != nil {
+	// Close the listener first so socket/port is released as early as possible
+	// during reloads (especially for UDP/HTTP3).
+	if err := convertError(errors.Join(l.Close(), srv.Shutdown(ctx))); err != nil {
 		logger.Err(err).Msg("failed to shutdown " + proto + " server")
 	} else {
 		logger.Info().Str("proto", proto).Str("addr", addr(srv)).Msg("server stopped")
