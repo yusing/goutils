@@ -1,7 +1,6 @@
 package strutils
 
 import (
-	"encoding/json"
 	"strings"
 )
 
@@ -28,7 +27,11 @@ func (r Redacted) MarshalYAML() ([]byte, error) {
 }
 
 func (r *Redacted) UnmarshalJSON(data []byte) error {
-	return json.Unmarshal(data, &r)
+	return UnmarshalJSON(data, &r)
+}
+
+func (r *Redacted) UnmarshalYAML(data []byte) error {
+	return UnmarshalYAML(data, &r)
 }
 
 func Redact(s string) string {
