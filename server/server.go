@@ -12,6 +12,7 @@ import (
 
 	"github.com/pires/go-proxyproto"
 	h2proxy "github.com/pires/go-proxyproto/helper/http2"
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -263,6 +264,16 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 			stop(srv, l, proto, opts.logger)
 		})
 	case *http3.Server:
+		srv.ConnContext = func(ctx context.Context, c *quic.Conn) context.Context {
+			subtask := task.Subtask("conn", true)
+			context.AfterFunc(ctx, func() {
+				subtask.Finish(ctx.Err())
+			})
+			subtask.SetValue(http3.ServerContextKey, srv)
+			subtask.SetValue(http.LocalAddrContextKey, c.LocalAddr())
+			subtask.SetValue(http3.RemoteAddrContextKey, c.RemoteAddr())
+			return subtask.Context()
+		}
 		l, err := lc.ListenPacket(task.Context(), "udp", srv.Addr)
 		if err != nil {
 			return port, err
