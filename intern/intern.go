@@ -12,12 +12,19 @@ type Handle[T comparable] struct {
 	v unique.Handle[T]
 }
 
+// Make is returns a Handle[T] from a value v.
 func Make[T comparable](v T) Handle[T] {
 	return Handle[T]{
 		v: unique.Make(v),
 	}
 }
 
+// MakeValue is a shortcut for unique.Make(v).Value()
+func MakeValue[T comparable](v T) T {
+	return unique.Make(v).Value()
+}
+
+// Value returns the value of the Handle[T].
 func (s Handle[T]) Value() T {
 	return s.v.Value()
 }
