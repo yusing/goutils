@@ -14,6 +14,7 @@ import (
 type LazyResponseModifier struct {
 	w            http.ResponseWriter
 	shouldBuffer func(http.Header) bool
+	maxBuffered  int
 
 	decided bool
 
@@ -32,6 +33,15 @@ func NewLazyResponseModifier(w http.ResponseWriter, shouldBuffer func(http.Heade
 		w:            w,
 		shouldBuffer: shouldBuffer,
 	}
+}
+
+// SetMaxBufferedBytes sets the maximum bytes allowed in buffered mode.
+//
+// If the buffer grows beyond this limit while writing, buffered content is
+// flushed immediately and the writer permanently switches to passthrough mode.
+// A non-positive value disables this limit.
+func (lrm *LazyResponseModifier) SetMaxBufferedBytes(max int) {
+	lrm.maxBuffered = max
 }
 
 func (lrm *LazyResponseModifier) Header() http.Header {
@@ -60,6 +70,13 @@ func (lrm *LazyResponseModifier) Write(b []byte) (int, error) {
 	}
 
 	if lrm.rm != nil {
+		if lrm.maxBuffered > 0 && lrm.rm.ContentLength()+len(b) > lrm.maxBuffered {
+			if _, err := lrm.rm.FlushRelease(); err != nil {
+				return 0, err
+			}
+			lrm.rm = nil
+			return lrm.w.Write(b)
+		}
 		return lrm.rm.Write(b)
 	}
 	return lrm.w.Write(b)
