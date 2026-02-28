@@ -70,13 +70,6 @@ func (lrm *LazyResponseModifier) Write(b []byte) (int, error) {
 	}
 
 	if lrm.rm != nil {
-		if lrm.maxBuffered > 0 && lrm.rm.ContentLength()+len(b) > lrm.maxBuffered {
-			if _, err := lrm.rm.FlushRelease(); err != nil {
-				return 0, err
-			}
-			lrm.rm = nil
-			return lrm.w.Write(b)
-		}
 		return lrm.rm.Write(b)
 	}
 	return lrm.w.Write(b)
@@ -88,6 +81,7 @@ func (lrm *LazyResponseModifier) decide() {
 	lrm.decided = true
 	if lrm.shouldBuffer(lrm.w.Header()) {
 		lrm.rm = NewResponseModifier(lrm.w)
+		lrm.rm.SetMaxBufferedBytes(lrm.maxBuffered)
 	}
 }
 

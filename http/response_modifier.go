@@ -28,6 +28,10 @@ type ResponseModifier struct {
 
 	hijacked bool
 
+	maxBufferedBytes int
+	passthrough      bool
+	committed        bool
+
 	errs gperr.Builder
 }
 
@@ -164,6 +168,10 @@ func (rm *ResponseModifier) BodyBuffer() *bytes.Buffer {
 
 func (rm *ResponseModifier) WriteHeader(code int) {
 	rm.statusCode = code
+	if rm.passthrough && !rm.committed {
+		rm.w.WriteHeader(rm.StatusCode())
+		rm.committed = true
+	}
 }
 
 // BodyReader returns a reader for the response body.
@@ -200,6 +208,17 @@ func (rm *ResponseModifier) SetBody(r io.ReadCloser) error {
 	}
 	r.Close()
 	return nil
+}
+
+// SetMaxBufferedBytes sets the max bytes allowed in memory before switching to passthrough mode.
+// A non-positive value disables the limit.
+func (rm *ResponseModifier) SetMaxBufferedBytes(max int) {
+	rm.maxBufferedBytes = max
+}
+
+// IsPassthrough reports whether the response modifier has switched to passthrough mode.
+func (rm *ResponseModifier) IsPassthrough() bool {
+	return rm.passthrough
 }
 
 func (rm *ResponseModifier) ContentLength() int {
@@ -249,6 +268,13 @@ func (rm *ResponseModifier) Write(b []byte) (int, error) {
 	if len(b) == 0 {
 		return 0, nil
 	}
+	if rm.passthrough {
+		if !rm.committed {
+			rm.w.WriteHeader(rm.StatusCode())
+			rm.committed = true
+		}
+		return rm.w.Write(b)
+	}
 
 	if rm.statusCode == 0 {
 		rm.statusCode = http.StatusOK
@@ -261,6 +287,23 @@ func (rm *ResponseModifier) Write(b []byte) (int, error) {
 		}
 		// try to pre-allocate the buffer to at least the size of the buffer b or the content length (from header or caller)
 		rm.buf = rm.bufPool.GetBufferAtLeast(max(len(b), origContentLength))
+	}
+	if rm.maxBufferedBytes > 0 && rm.buf.Len()+len(b) > rm.maxBufferedBytes {
+		h := rm.w.Header()
+		h.Del("Content-Length")
+		h.Del("Transfer-Encoding")
+		h.Del("Trailer")
+		rm.w.WriteHeader(rm.StatusCode())
+		rm.committed = true
+		if content := rm.Content(); len(content) > 0 {
+			if _, err := rm.w.Write(content); err != nil {
+				return 0, fmt.Errorf("failed to flush buffered body: %w", err)
+			}
+		}
+		rm.bufPool.PutBuffer(rm.buf)
+		rm.buf = nil
+		rm.passthrough = true
+		return rm.w.Write(b)
 	}
 	return rm.buf.Write(b)
 }
@@ -284,15 +327,15 @@ func (rm *ResponseModifier) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 func (rm *ResponseModifier) FlushRelease() (int, error) {
 	n := 0
 	if !rm.hijacked {
-		if rm.bodyModified {
+		if rm.passthrough {
+			// nothing to flush in passthrough mode, response was already streamed out.
+		} else if rm.bodyModified {
 			h := rm.w.Header()
 			h.Set("Content-Length", rm.ContentLengthStr())
 			h.Del("Transfer-Encoding")
 			h.Del("Trailer")
-		}
-		rm.w.WriteHeader(rm.StatusCode())
+			rm.w.WriteHeader(rm.StatusCode())
 
-		if rm.bodyModified {
 			if content := rm.Content(); len(content) > 0 {
 				nn, werr := rm.w.Write(content)
 				n += nn
@@ -303,6 +346,8 @@ func (rm *ResponseModifier) FlushRelease() (int, error) {
 					rm.AppendError("flush error: %w", err)
 				}
 			}
+		} else {
+			rm.w.WriteHeader(rm.StatusCode())
 		}
 	}
 
