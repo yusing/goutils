@@ -70,8 +70,9 @@ var (
 )
 
 const (
-	TextMessage   = websocket.TextMessage
-	BinaryMessage = websocket.BinaryMessage
+	TextMessage                    = websocket.TextMessage
+	BinaryMessage                  = websocket.BinaryMessage
+	CSRFSecWebSocketProtocolPrefix = "csrf."
 )
 
 // NewManagerWithUpgrade upgrades the HTTP connection to a WebSocket connection and returns a Manager.
@@ -85,7 +86,7 @@ func NewManagerWithUpgrade(c *gin.Context) (*Manager, error) {
 		actualUpgrader = upgrader.(*websocket.Upgrader)
 	}
 
-	conn, err := actualUpgrader.Upgrade(c.Writer, c.Request, nil)
+	conn, err := actualUpgrader.Upgrade(c.Writer, c.Request, websocketUpgradeResponseHeader(c.Request))
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +132,25 @@ func NewManagerWithUpgrade(c *gin.Context) (*Manager, error) {
 	}()
 
 	return cm, nil
+}
+
+func websocketUpgradeResponseHeader(r *http.Request) http.Header {
+	subprotocol := csrfWebSocketSubprotocol(r)
+	if subprotocol == "" {
+		return nil
+	}
+	return http.Header{
+		"Sec-WebSocket-Protocol": []string{subprotocol},
+	}
+}
+
+func csrfWebSocketSubprotocol(r *http.Request) string {
+	for _, protocol := range websocket.Subprotocols(r) {
+		if strings.HasPrefix(protocol, CSRFSecWebSocketProtocolPrefix) {
+			return protocol
+		}
+	}
+	return ""
 }
 
 func (cm *Manager) Context() context.Context {
