@@ -7,8 +7,8 @@ replace github.com/yusing/goutils => ../
 require (
 	github.com/pires/go-proxyproto v0.11.0
 	github.com/quic-go/quic-go v0.59.0
-	github.com/rs/zerolog v1.34.0
-	github.com/samber/slog-zerolog/v2 v2.9.1
+	github.com/rs/zerolog v1.35.0
+	github.com/samber/slog-zerolog/v2 v2.9.2
 	github.com/yusing/goutils v0.7.0
 	golang.org/x/net v0.52.0
 )
@@ -19,7 +19,7 @@ require (
 	github.com/puzpuzpuz/xsync/v4 v4.4.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/samber/lo v1.53.0 // indirect
-	github.com/samber/slog-common v0.20.0 // indirect
+	github.com/samber/slog-common v0.22.0 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/text v0.35.0 // indirect

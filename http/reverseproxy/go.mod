@@ -6,7 +6,7 @@ replace github.com/yusing/goutils => ../..
 
 require (
 	github.com/quic-go/quic-go v0.59.0
-	github.com/rs/zerolog v1.34.0
+	github.com/rs/zerolog v1.35.0
 	github.com/yusing/goutils v0.7.0
 	golang.org/x/net v0.52.0
 )

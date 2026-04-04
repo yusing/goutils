@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3
 	github.com/puzpuzpuz/xsync/v4 v4.4.0
-	github.com/rs/zerolog v1.34.0
+	github.com/rs/zerolog v1.35.0
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/net v0.52.0
 	golang.org/x/sync v0.20.0
