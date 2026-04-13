@@ -32,24 +32,29 @@ type ACL interface {
 }
 
 type Server struct {
-	Name         string
-	CertProvider CertProvider
-	http         *http.Server
-	https        *http.Server
-	startTime    time.Time
-	acl          ACL
-	proxyProto   bool
+	Name          string
+	CertProvider  CertProvider
+	http          *http.Server
+	https         *http.Server
+	httpListener  net.Listener
+	httpsListener net.Listener
+	startTime     time.Time
+	acl           ACL
+	proxyProto    bool
 
 	l zerolog.Logger
 }
 
 type Options struct {
-	Name         string
-	HTTPAddr     string
-	HTTPSAddr    string
-	CertProvider CertProvider
-	Handler      http.Handler
-	ACL          ACL
+	Name             string
+	HTTPAddr         string
+	HTTPSAddr        string
+	HTTPListener     net.Listener
+	HTTPSListener    net.Listener
+	CertProvider     CertProvider
+	Handler          http.Handler
+	ACL              ACL
+	TLSConfigMutator func(*tls.Config) *tls.Config
 
 	SupportProxyProtocol bool
 }
@@ -93,27 +98,33 @@ func NewServer(opt Options) (s *Server) {
 		}
 	}
 	if certAvailable && opt.HTTPSAddr != "" {
+		tlsConfig := &tls.Config{
+			GetCertificate: opt.CertProvider.GetCert,
+			MinVersion:     tls.VersionTLS12,
+			NextProtos:     []string{http2.NextProtoTLS, "http/1.1"},
+		}
+		if opt.TLSConfigMutator != nil {
+			tlsConfig = opt.TLSConfigMutator(tlsConfig)
+		}
 		httpsSer = &http.Server{
-			Addr:    opt.HTTPSAddr,
-			Handler: opt.Handler,
-			TLSConfig: &tls.Config{
-				GetCertificate: opt.CertProvider.GetCert,
-				MinVersion:     tls.VersionTLS12,
-				NextProtos:     []string{http2.NextProtoTLS, "http/1.1"},
-			},
+			Addr:      opt.HTTPSAddr,
+			Handler:   opt.Handler,
+			TLSConfig: tlsConfig,
 		}
 		if err := http2.ConfigureServer(httpsSer, &http2.Server{}); err != nil {
 			logger.Error().Err(err).Msg("failed to configure HTTP/2 for HTTPS server")
 		}
 	}
 	return &Server{
-		Name:         opt.Name,
-		CertProvider: opt.CertProvider,
-		http:         httpSer,
-		https:        httpsSer,
-		l:            logger,
-		acl:          opt.ACL,
-		proxyProto:   opt.SupportProxyProtocol,
+		Name:          opt.Name,
+		CertProvider:  opt.CertProvider,
+		http:          httpSer,
+		https:         httpsSer,
+		httpListener:  opt.HTTPListener,
+		httpsListener: opt.HTTPSListener,
+		l:             logger,
+		acl:           opt.ACL,
+		proxyProto:    opt.SupportProxyProtocol,
 	}
 }
 
@@ -156,14 +167,14 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 	}
 
 	subtask := parent.Subtask(taskName("http"), true)
-	_, err := Start(subtask, s.http, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	_, err := Start(subtask, s.http, WithListener(s.httpListener), WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
 	if err != nil {
 		subtask.Finish(err)
 		return fmt.Errorf("failed to start HTTP server: %w", err)
 	}
 
 	subtask = parent.Subtask(taskName("https"), true)
-	_, err = Start(subtask, s.https, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	_, err = Start(subtask, s.https, WithListener(s.httpsListener), WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
 	if err != nil {
 		subtask.Finish(err)
 		return fmt.Errorf("failed to start HTTPS server: %w", err)
@@ -176,6 +187,7 @@ type ServerStartOptions struct {
 	udpWrappers []func(l net.PacketConn) net.PacketConn
 	logger      *zerolog.Logger
 	proxyProto  bool
+	listener    net.Listener
 }
 
 type ServerStartOption func(opts *ServerStartOptions)
@@ -214,6 +226,12 @@ func WithProxyProtocolSupport(value bool) ServerStartOption {
 	}
 }
 
+func WithListener(listener net.Listener) ServerStartOption {
+	return func(opts *ServerStartOptions) {
+		opts.listener = listener
+	}
+}
+
 func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStartOption) (port int, err error) {
 	if srv == nil {
 		return port, nil
@@ -241,9 +259,12 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 		srv.BaseContext = func(l net.Listener) context.Context {
 			return task.Context()
 		}
-		l, err := lc.Listen(task.Context(), "tcp", srv.Addr)
-		if err != nil {
-			return port, err
+		l := opts.listener
+		if l == nil {
+			l, err = lc.Listen(task.Context(), "tcp", srv.Addr)
+			if err != nil {
+				return port, err
+			}
 		}
 		port = l.Addr().(*net.TCPAddr).Port
 		if opts.proxyProto {
