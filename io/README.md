@@ -28,5 +28,5 @@ ioutils.CopyCloseWithContext(ctx, w, upstream.Body, 8*1024)
 - Uses 32KB default buffer
 - Supports size hints for optimal allocation (optional)
 - Uses `synk.GetSizedBytesPool` for buffer pooling to reduce GC pressure
-- HTTP flusher support for streaming
+- HTTP flusher support for streaming responses only (`text/event-stream` or chunked responses without a `Content-Length`)
 - Automatic cleanup on context cancellation

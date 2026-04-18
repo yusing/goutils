@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"strings"
 
 	"github.com/yusing/goutils/synk"
 )
@@ -67,7 +69,7 @@ func copyClose(ctx context.Context, dst io.Writer, src io.Reader, sizeHint int) 
 		}
 	}
 
-	flusher := getHTTPFlusher(dst)
+	flusher, shouldFlush := getHTTPFlusher(dst)
 	for {
 		nr, er := src.Read(buf)
 		if nr > 0 {
@@ -86,7 +88,7 @@ func copyClose(ctx context.Context, dst io.Writer, src io.Reader, sizeHint int) 
 				err = io.ErrShortWrite
 				return
 			}
-			if flusher != nil {
+			if shouldFlush {
 				err = flusher.FlushError()
 				if err != nil {
 					return err
@@ -119,21 +121,47 @@ func (f *flusherWrapper) FlushError() error {
 	return nil
 }
 
-func getHTTPFlusher(dst io.Writer) flushErrorInterface {
+func getHTTPFlusher(dst io.Writer) (flusher flushErrorInterface, shouldFlush bool) {
 	// pre-unwrap the flusher to prevent unwrap and check in every loop
 	if rw, ok := dst.(http.ResponseWriter); ok {
 		for {
 			switch t := rw.(type) {
 			case flushErrorInterface:
-				return t
+				return t, shouldFlushHTTPWriter(rw)
 			case http.Flusher:
-				return &flusherWrapper{rw: t}
+				return &flusherWrapper{rw: t}, shouldFlushHTTPWriter(rw)
 			case rwUnwrapper:
 				rw = t.Unwrap()
 			default:
-				return nil
+				return nil, false
 			}
 		}
 	}
-	return nil
+	return nil, false
+}
+
+func shouldFlushHTTPWriter(rw http.ResponseWriter) bool {
+	header := rw.Header()
+
+	contentType := header.Get("Content-Type")
+	if contentType != "" {
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		if err == nil && strings.EqualFold(mediaType, "text/event-stream") {
+			return true
+		}
+	}
+
+	if header.Get("Content-Length") != "" {
+		return false
+	}
+
+	for _, value := range header.Values("Transfer-Encoding") {
+		for token := range strings.SplitSeq(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(token), "chunked") {
+				return true
+			}
+		}
+	}
+
+	return false
 }
