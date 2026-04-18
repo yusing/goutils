@@ -13,9 +13,10 @@ type (
 )
 
 type CachedFuncConfig struct {
-	retries int
-	backoff backoff.BackOff
-	ttl     time.Duration
+	retries        int
+	backoff        backoff.BackOff
+	backoffFactory func() backoff.BackOff
+	ttl            time.Duration
 }
 
 type CachedFuncBuilder[T any] struct {
@@ -47,37 +48,53 @@ func NewKeyFunc[T any, K comparable](fn CachedContextKeyFunc[T, K]) CachedKeyFun
 
 func (builder CachedFuncBuilder[T]) WithRetriesExponentialBackoff(retries int) CachedFuncBuilder[T] {
 	builder.retries = retries
-	builder.backoff = backoff.NewExponentialBackOff()
+	builder.backoffFactory = func() backoff.BackOff {
+		return backoff.NewExponentialBackOff()
+	}
 	return builder
 }
 
 func (builder CachedKeyFuncBuilder[T, K]) WithRetriesExponentialBackoff(retries int) CachedKeyFuncBuilder[T, K] {
 	builder.retries = retries
-	builder.backoff = backoff.NewExponentialBackOff()
+	builder.backoffFactory = func() backoff.BackOff {
+		return backoff.NewExponentialBackOff()
+	}
 	return builder
 }
 
 func (builder CachedFuncBuilder[T]) WithRetriesConstantBackoff(retries int, interval time.Duration) CachedFuncBuilder[T] {
 	builder.retries = retries
-	builder.backoff = backoff.NewConstantBackOff(interval)
+	builder.backoffFactory = func() backoff.BackOff {
+		return backoff.NewConstantBackOff(interval)
+	}
+	builder.backoff = builder.backoffFactory()
 	return builder
 }
 
 func (builder CachedKeyFuncBuilder[T, K]) WithRetriesConstantBackoff(retries int, interval time.Duration) CachedKeyFuncBuilder[T, K] {
 	builder.retries = retries
-	builder.backoff = backoff.NewConstantBackOff(interval)
+	builder.backoffFactory = func() backoff.BackOff {
+		return backoff.NewConstantBackOff(interval)
+	}
+	builder.backoff = builder.backoffFactory()
 	return builder
 }
 
 func (builder CachedFuncBuilder[T]) WithRetriesZeroBackoff(retries int) CachedFuncBuilder[T] {
 	builder.retries = retries
-	builder.backoff = &backoff.ZeroBackOff{}
+	builder.backoffFactory = func() backoff.BackOff {
+		return &backoff.ZeroBackOff{}
+	}
+	builder.backoff = builder.backoffFactory()
 	return builder
 }
 
 func (builder CachedKeyFuncBuilder[T, K]) WithRetriesZeroBackoff(retries int) CachedKeyFuncBuilder[T, K] {
 	builder.retries = retries
-	builder.backoff = &backoff.ZeroBackOff{}
+	builder.backoffFactory = func() backoff.BackOff {
+		return &backoff.ZeroBackOff{}
+	}
+	builder.backoff = builder.backoffFactory()
 	return builder
 }
 

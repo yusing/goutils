@@ -90,7 +90,7 @@ func TestStatesJanitor_TriggerCleanup(t *testing.T) {
 	// Manually process the signal
 	select {
 	case state := <-j.signal:
-		j.cleanup(state)
+		j.cleanupTriggered(state)
 	case <-time.After(time.Second):
 		t.Fatal("Cleanup not triggered within timeout")
 	}
@@ -208,7 +208,7 @@ func TestStatesJanitor_ConcurrentCleanup(t *testing.T) {
 		for {
 			select {
 			case state := <-j.signal:
-				j.cleanup(state)
+				j.cleanupTriggered(state)
 			default:
 				if mock.CleanupCount() > 0 {
 					return
@@ -245,7 +245,7 @@ func TestStatesJanitor_TriggerCleanupIdempotent(t *testing.T) {
 	// Should only process one cleanup
 	select {
 	case state := <-j.signal:
-		j.cleanup(state)
+		j.cleanupTriggered(state)
 	case <-time.After(time.Second):
 		t.Fatal("Expected at least one cleanup signal")
 	}
@@ -284,7 +284,7 @@ func TestStatesJanitor_CleanupAllWithPendingCleanup(t *testing.T) {
 	for {
 		select {
 		case state := <-j.signal:
-			j.cleanup(state)
+			j.cleanupTriggered(state)
 		default:
 			goto done
 		}
@@ -294,6 +294,35 @@ done:
 	// Should only trigger once
 	if mock.CleanupCount() != 1 {
 		t.Errorf("Expected 1 cleanup, got %d", mock.CleanupCount())
+	}
+}
+
+func TestStatesJanitor_TriggerCleanupCanRunAgainAfterSignalProcessing(t *testing.T) {
+	j := &statesJanitor{
+		signal: make(chan *state, maxStatesPerJanitor),
+	}
+
+	mock := &mockState{}
+	idx := j.Add(mock, 0)
+
+	j.TriggerCleanup(idx)
+	select {
+	case state := <-j.signal:
+		j.cleanupTriggered(state)
+	case <-time.After(time.Second):
+		t.Fatal("first cleanup not triggered within timeout")
+	}
+
+	j.TriggerCleanup(idx)
+	select {
+	case state := <-j.signal:
+		j.cleanupTriggered(state)
+	case <-time.After(time.Second):
+		t.Fatal("second cleanup not triggered within timeout")
+	}
+
+	if mock.CleanupCount() != 2 {
+		t.Errorf("Expected 2 cleanups, got %d", mock.CleanupCount())
 	}
 }
 

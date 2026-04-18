@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/cenkalti/backoff/v5"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -172,6 +174,101 @@ func TestCachedFuncState_ContextCancellation(t *testing.T) {
 	assert.GreaterOrEqual(t, callCount, 1)
 }
 
+func TestCachedFuncState_ContextCancellationDuringBackoffSleep(t *testing.T) {
+	fnStarted := make(chan struct{})
+	fn := func(ctx context.Context) (string, error) {
+		select {
+		case <-fnStarted:
+		default:
+			close(fnStarted)
+		}
+		return "", errors.New("persistent error")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cachedFunc := NewFunc(fn).WithRetriesConstantBackoff(10, 200*time.Millisecond).Build()
+
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		_, err := cachedFunc(ctx)
+		done <- err
+	}()
+
+	<-fnStarted
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+		assert.Less(t, time.Since(start), 150*time.Millisecond)
+	case <-time.After(time.Second):
+		t.Fatal("cached function did not return promptly after cancellation")
+	}
+}
+
+func TestCachedFuncState_CanceledRetryDoesNotPoisonCache(t *testing.T) {
+	var callCount atomic.Int32
+	fnStarted := make(chan struct{})
+	fn := func(ctx context.Context) (string, error) {
+		if callCount.Add(1) == 1 {
+			close(fnStarted)
+			return "", errors.New("transient error")
+		}
+		return "success", nil
+	}
+
+	cachedFunc := NewFunc(fn).WithRetriesConstantBackoff(1, 200*time.Millisecond).Build()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := cachedFunc(ctx)
+		done <- err
+	}()
+
+	<-fnStarted
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("cached function did not return promptly after cancellation")
+	}
+
+	result, err := cachedFunc(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, "success", result)
+	assert.Equal(t, int32(2), callCount.Load())
+}
+
+func TestCachedFuncState_BackoffStopStopsRetries(t *testing.T) {
+	testErr := errors.New("persistent error")
+	var callCount atomic.Int32
+	state := &CachedFuncState[string]{
+		CachedFuncBuilder: CachedFuncBuilder[string]{
+			CachedFuncConfig: CachedFuncConfig{
+				retries: 3,
+				backoffFactory: func() backoff.BackOff {
+					return &stopBackOff{}
+				},
+			},
+			fn: func(ctx context.Context) (string, error) {
+				callCount.Add(1)
+				return "", testErr
+			},
+		},
+	}
+
+	result, err := state.execute(t.Context())
+	assert.ErrorIs(t, err, testErr)
+	assert.Empty(t, result)
+	assert.Equal(t, int32(1), callCount.Load())
+}
+
 func TestCachedFuncState_ConcurrentAccess(t *testing.T) {
 	callCount := 0
 	fn := func(ctx context.Context) (int, error) {
@@ -205,6 +302,96 @@ func TestCachedFuncState_ConcurrentAccess(t *testing.T) {
 
 	// Function should only be called once due to proper locking
 	assert.Equal(t, 1, callCount)
+}
+
+type stopBackOff struct{}
+
+func (*stopBackOff) NextBackOff() time.Duration {
+	return backoff.Stop
+}
+
+func (*stopBackOff) Reset() {}
+
+func TestCachedFuncState_ConcurrentAccessAfterTTLExpiry(t *testing.T) {
+	var callCount atomic.Int32
+	recomputeStarted := make(chan struct{})
+	releaseRecompute := make(chan struct{})
+
+	fn := func(ctx context.Context) (int, error) {
+		switch callCount.Add(1) {
+		case 1:
+			return 1, nil
+		default:
+			select {
+			case <-recomputeStarted:
+			default:
+				close(recomputeStarted)
+			}
+			<-releaseRecompute
+			return 2, nil
+		}
+	}
+
+	ttl := 20 * time.Millisecond
+	cachedFunc := NewFunc(fn).WithTTL(ttl).Build()
+
+	result, err := cachedFunc(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, 1, result)
+
+	time.Sleep(ttl + 10*time.Millisecond)
+
+	var wg sync.WaitGroup
+	results := make([]int, 12)
+	errs := make([]error, 12)
+	for i := range len(results) {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			results[index], errs[index] = cachedFunc(context.Background())
+		}(i)
+	}
+
+	<-recomputeStarted
+	assert.Equal(t, int32(2), callCount.Load())
+	close(releaseRecompute)
+	wg.Wait()
+
+	for i := range len(results) {
+		assert.NoError(t, errs[i])
+		assert.Equal(t, 2, results[i])
+	}
+	assert.Equal(t, int32(2), callCount.Load())
+}
+
+func TestCachedFuncState_ErrorExpiresAndRefreshes(t *testing.T) {
+	var callCount atomic.Int32
+	testErr := errors.New("temporary error")
+	fn := func(ctx context.Context) (string, error) {
+		if callCount.Add(1) == 1 {
+			return "", testErr
+		}
+		return "success", nil
+	}
+
+	ttl := 20 * time.Millisecond
+	cachedFunc := NewFunc(fn).WithTTL(ttl).Build()
+
+	result, err := cachedFunc(context.Background())
+	assert.ErrorIs(t, err, testErr)
+	assert.Empty(t, result)
+
+	result, err = cachedFunc(context.Background())
+	assert.ErrorIs(t, err, testErr)
+	assert.Empty(t, result)
+	assert.Equal(t, int32(1), callCount.Load())
+
+	time.Sleep(ttl + 10*time.Millisecond)
+
+	result, err = cachedFunc(context.Background())
+	assert.NoError(t, err)
+	assert.Equal(t, "success", result)
+	assert.Equal(t, int32(2), callCount.Load())
 }
 
 func TestCachedFuncState_DifferentTypes(t *testing.T) {

@@ -1,22 +1,22 @@
 package cache
 
 import (
-	"container/list"
+	"cmp"
 	"context"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/cenkalti/backoff/v5"
 	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type CacheEntry[T any] struct {
-	sync.Mutex
-
-	result T
-	err    error
-
-	expireAt time.Time
-	element  *list.Element // linked list element for this entry
+	refreshMu sync.Mutex
+	cached    atomic.Pointer[cachedValue[T]]
+	accessSeq atomic.Uint64
+	queuedSeq atomic.Uint64
 }
 
 type CachedContextKeyFuncState[T any, K comparable] struct {
@@ -24,17 +24,27 @@ type CachedContextKeyFuncState[T any, K comparable] struct {
 
 	entries *xsync.Map[K, *CacheEntry[T]]
 
-	mru     *list.List // keys ordered by access time, from most recent to least recent
-	mruLock sync.Mutex
+	accessSeq atomic.Uint64
+
+	accessLogMu sync.Mutex
+	accessLog   []cleanupCandidate[K]
+	cleanupLog  []cleanupCandidate[K]
+	cleanupMu   sync.Mutex
 
 	janitorIdx int
 }
 
+type cleanupCandidate[K comparable] struct {
+	key K
+	seq uint64
+}
+
 func newCachedContextKeyFuncState[T any, K comparable](builder CachedKeyFuncBuilder[T, K]) *CachedContextKeyFuncState[T, K] {
+	accessLogCap := initialAccessLogCap(builder.maxEntries)
 	state := &CachedContextKeyFuncState[T, K]{
 		CachedKeyFuncBuilder: builder,
 		entries:              xsync.NewMap[K, *CacheEntry[T]](),
-		mru:                  list.New(),
+		accessLog:            make([]cleanupCandidate[K], 0, accessLogCap),
 	}
 	// cleanup is only needed if maxEntries is set
 	if state.maxEntries > 0 {
@@ -43,35 +53,92 @@ func newCachedContextKeyFuncState[T any, K comparable](builder CachedKeyFuncBuil
 	return state
 }
 
-func (state *CachedContextKeyFuncState[T, K]) checkExpired(entry *CacheEntry[T]) bool {
+func (state *CachedContextKeyFuncState[T, K]) checkExpired(cached *cachedValue[T]) bool {
+	if cached == nil {
+		return true
+	}
 	if state.ttl == 0 {
 		return false
 	}
-
-	// should not happen
-	//
-	// If expireAt is zero time (uninitialized), consider it expired
-	// if entry.expireAt.IsZero() {
-	// 	return true
-	// }
-	return time.Now().After(entry.expireAt)
+	return time.Now().After(cached.expireAt)
 }
 
 func (state *CachedContextKeyFuncState[T, K]) Cleanup() {
+	// Cleanup is the single consumer for the access log scratch buffers. Multiple callers may
+	// race to request cleanup, but only one pass may swap/sort/restore logs at a time.
+	state.cleanupMu.Lock()
+	defer state.cleanupMu.Unlock()
+
 	if state.maxEntries == 0 { // should not happen, but just in case
 		return
 	}
-	if state.entries.Size() <= state.maxEntries {
+
+	overflow := state.entries.Size() - state.maxEntries
+	if overflow <= 0 {
 		return
 	}
 
-	state.mruLock.Lock()
-	defer state.mruLock.Unlock()
-	for state.mru.Len() > state.maxEntries {
-		// remove the oldest entry
-		key := state.mru.Remove(state.mru.Back()).(K)
-		state.entries.Delete(key)
+	log := state.swapAccessLogs()
+
+	current := log[:0]
+	for _, candidate := range log {
+		entry, ok := state.entries.Load(candidate.key)
+		if !ok {
+			continue
+		}
+		// accessSeq is the source of truth for the most recent touch recorded for this entry.
+		latestSeq := entry.accessSeq.Load()
+		if latestSeq == 0 {
+			continue
+		}
+		if latestSeq == candidate.seq {
+			// queuedSeq == candidate.seq means this candidate is still the active cleanup schedule.
+			if entry.queuedSeq.Load() == candidate.seq {
+				current = append(current, candidate)
+			}
+			continue
+		}
+		// Rewrite the queued sequence in a single CAS so touchEntry never observes a transient
+		// queuedSeq==0 state for an entry that is already scheduled for cleanup.
+		if !entry.queuedSeq.CompareAndSwap(candidate.seq, latestSeq) {
+			continue
+		}
+		current = append(current, cleanupCandidate[K]{key: candidate.key, seq: latestSeq})
 	}
+	if len(current) == 0 {
+		return
+	}
+
+	slices.SortFunc(current, func(a, b cleanupCandidate[K]) int {
+		return cmp.Compare(a.seq, b.seq)
+	})
+
+	survivors := current[:0]
+	for _, candidate := range current {
+		if overflow <= 0 {
+			survivors = append(survivors, candidate)
+			continue
+		}
+
+		entry, ok := state.entries.Load(candidate.key)
+		// If accessSeq moved, a newer touch won the race and this entry must be reconsidered later.
+		if !ok || entry.accessSeq.Load() != candidate.seq {
+			survivors = append(survivors, candidate)
+			continue
+		}
+		// queuedSeq == candidate.seq means this cleanup pass still owns the scheduled candidate.
+		if !entry.queuedSeq.CompareAndSwap(candidate.seq, 0) {
+			continue
+		}
+
+		// Once the entry is unscheduled, a concurrent touch may enqueue a fresher candidate.
+		// Deleting here only races with that enqueue path; a later load either sees no entry or
+		// a replacement entry, and stale candidates are ignored by the Load/accessSeq checks above.
+		state.entries.Delete(candidate.key)
+		overflow--
+	}
+
+	state.restoreAccessLog(survivors)
 }
 
 func newCacheEntry[T any]() (entry *CacheEntry[T], cancel bool) {
@@ -80,67 +147,145 @@ func newCacheEntry[T any]() (entry *CacheEntry[T], cancel bool) {
 
 func (state *CachedContextKeyFuncState[T, K]) callContext(ctx context.Context, key K) (T, error) {
 	entry, loaded := state.entries.LoadOrCompute(key, newCacheEntry[T])
-	entry.Lock()
-
 	if loaded {
-		// After acquiring the lock, check if the entry is valid.
-		if !state.checkExpired(entry) {
-			entry.Unlock()
-			return entry.result, entry.err
-		}
-	} else { // This is a new entry we just created.
-		if state.maxEntries > 0 {
-			// move once now to front of time list (most recently used)
-			entry.element = state.moveToFront(key, entry.element)
-			// it might be a long running tasks, do it again at the end
-			defer state.moveToFront(key, entry.element)
-		}
-		if state.maxEntries > 0 && state.entries.Size() > state.maxEntries {
-			defer Janitor.TriggerCleanup(state.janitorIdx)
+		if cached := entry.cached.Load(); !state.checkExpired(cached) {
+			state.touchEntry(key, entry)
+			return cached.result, cached.err
 		}
 	}
 
-	// We are the one to compute (or re-compute) the value.
-	defer entry.Unlock()
+	entry.refreshMu.Lock()
+	defer entry.refreshMu.Unlock()
 
-	// Compute the result
-	entry.result, entry.err = state.fn(ctx, key)
-	if entry.err != nil {
-		retries := state.retries
+	if cached := entry.cached.Load(); !state.checkExpired(cached) {
+		state.touchEntry(key, entry)
+		return cached.result, cached.err
+	}
 
-	retriesLoop:
-		for retries > 0 {
-			select {
-			case <-ctx.Done():
-				return entry.result, context.Cause(ctx)
-			default:
-				retries--
-				time.Sleep(state.backoff.NextBackOff())
+	result, err := state.execute(ctx, key)
+	if shouldCacheResult(ctx, err) {
+		cached := &cachedValue[T]{
+			result: result,
+			err:    err,
+		}
+		if state.ttl > 0 {
+			cached.expireAt = time.Now().Add(state.ttl)
+		}
+		entry.cached.Store(cached)
+	}
 
-				entry.result, entry.err = state.fn(ctx, key)
-				if entry.err == nil {
-					state.backoff.Reset()
-					break retriesLoop
-				}
+	state.touchEntry(key, entry)
+	if state.maxEntries > 0 && !loaded && state.entries.Size() > state.maxEntries {
+		Janitor.TriggerCleanup(state.janitorIdx)
+	}
+
+	return result, err
+}
+
+func (state *CachedContextKeyFuncState[T, K]) newBackoff() backoff.BackOff {
+	if state.backoffFactory == nil {
+		return &backoff.ZeroBackOff{}
+	}
+	return state.backoffFactory()
+}
+
+func (state *CachedContextKeyFuncState[T, K]) execute(ctx context.Context, key K) (T, error) {
+	result, err := state.fn(ctx, key)
+	if err == nil || state.retries == 0 {
+		return result, err
+	}
+
+	retries := state.retries
+	retryBackoff := state.newBackoff()
+
+	for retries > 0 {
+		select {
+		case <-ctx.Done():
+			return result, context.Cause(ctx)
+		default:
+			retries--
+			delay := retryBackoff.NextBackOff()
+			if delay == backoff.Stop {
+				return result, err
+			}
+			if err := waitForBackoff(ctx, delay); err != nil {
+				return result, err
+			}
+
+			result, err = state.fn(ctx, key)
+			if err == nil {
+				return result, nil
 			}
 		}
 	}
 
-	// Update expiration time
-	if state.ttl > 0 {
-		entry.expireAt = time.Now().Add(state.ttl)
-	}
-	return entry.result, entry.err
+	return result, err
 }
 
-// moveToFront moves the entry to the front of the time list (most recently used)
-func (state *CachedContextKeyFuncState[T, K]) moveToFront(k K, elem *list.Element) *list.Element {
-	state.mruLock.Lock()
-	defer state.mruLock.Unlock()
-	if elem != nil {
-		state.mru.MoveToFront(elem)
-		return elem
-	} else {
-		return state.mru.PushFront(k)
+func (state *CachedContextKeyFuncState[T, K]) nextAccessSeq() uint64 {
+	return state.accessSeq.Add(1)
+}
+
+// touchEntry records that an entry was recently accessed without taking a global lock.
+func (state *CachedContextKeyFuncState[T, K]) touchEntry(key K, entry *CacheEntry[T]) {
+	if state.maxEntries == 0 {
+		return
 	}
+	seq := state.nextAccessSeq()
+	// Once accessSeq is stored, Cleanup can safely observe this touch before deciding whether to
+	// keep, re-queue, or evict the entry.
+	entry.accessSeq.Store(seq)
+	// queuedSeq==0 means "not currently scheduled". queuedSeq!=0 means "already scheduled at that
+	// sequence", and Cleanup will observe accessSeq >= queuedSeq and either keep the candidate or
+	// rewrite queuedSeq to the newer accessSeq before reconsidering eviction.
+	if entry.queuedSeq.Load() != 0 {
+		// Returning early is safe because an already-queued entry will still be examined by Cleanup,
+		// which observes the newer accessSeq before eviction or re-queues the candidate if needed.
+		return
+	}
+	// Cleanup may concurrently delete the entry from the map, but that only races with enqueueing:
+	// the cleanup pass decides using the queuedSeq/accessSeq pair, and this path only publishes a
+	// new candidate when the entry is currently unscheduled.
+	state.enqueueCleanupCandidate(key, entry, seq)
+}
+
+func (state *CachedContextKeyFuncState[T, K]) enqueueCleanupCandidate(key K, entry *CacheEntry[T], seq uint64) {
+	if seq == 0 || !entry.queuedSeq.CompareAndSwap(0, seq) {
+		return
+	}
+	state.accessLogMu.Lock()
+	state.accessLog = append(state.accessLog, cleanupCandidate[K]{key: key, seq: seq})
+	state.accessLogMu.Unlock()
+}
+
+func (state *CachedContextKeyFuncState[T, K]) swapAccessLogs() []cleanupCandidate[K] {
+	state.accessLogMu.Lock()
+	defer state.accessLogMu.Unlock()
+
+	if cap(state.cleanupLog) < cap(state.accessLog) {
+		state.cleanupLog = make([]cleanupCandidate[K], 0, cap(state.accessLog))
+	}
+
+	log := state.accessLog
+	spare := state.cleanupLog
+	state.accessLog = spare[:0]
+	state.cleanupLog = log[:0]
+	return log
+}
+
+func (state *CachedContextKeyFuncState[T, K]) restoreAccessLog(log []cleanupCandidate[K]) {
+	if len(log) == 0 {
+		return
+	}
+
+	state.accessLogMu.Lock()
+	state.accessLog = append(state.accessLog, log...)
+	state.accessLogMu.Unlock()
+}
+
+func initialAccessLogCap(maxEntries int) int {
+	if maxEntries <= 0 {
+		return 64
+	}
+	return max(64, maxEntries+min(1024, maxEntries/4))
 }

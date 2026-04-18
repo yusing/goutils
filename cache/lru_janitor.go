@@ -61,6 +61,7 @@ func (j *statesJanitor) TriggerCleanup(idx int) {
 	select {
 	case j.signal <- state:
 	default:
+		state.pendingCleanup.Store(false)
 	}
 }
 
@@ -71,8 +72,7 @@ func (j *statesJanitor) CleanupAll() {
 			// already triggered, will be handled in case s := <-j.signal below
 			continue
 		}
-		j.cleanup(s)
-		s.pendingCleanup.Store(false)
+		j.cleanupTriggered(s)
 	}
 }
 
@@ -86,6 +86,11 @@ func (j *statesJanitor) cleanup(s *state) {
 	s.lastCleanup = time.Now()
 }
 
+func (j *statesJanitor) cleanupTriggered(s *state) {
+	defer s.pendingCleanup.Store(false)
+	j.cleanup(s)
+}
+
 func (j *statesJanitor) runLoop() {
 	ticker := time.NewTicker(time.Second)
 	for {
@@ -93,7 +98,7 @@ func (j *statesJanitor) runLoop() {
 		case <-ticker.C: // background cleanup
 			j.CleanupAll()
 		case s := <-j.signal: // active cleanup
-			j.cleanup(s)
+			j.cleanupTriggered(s)
 		}
 	}
 }

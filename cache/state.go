@@ -5,79 +5,105 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/cenkalti/backoff/v5"
 )
+
+type cachedValue[T any] struct {
+	result   T
+	err      error
+	expireAt time.Time
+}
 
 type CachedFuncState[T any] struct {
 	CachedFuncBuilder[T]
-	sync.Mutex
 
-	result T
-	err    error
+	mu sync.Mutex
 
-	cached uintptr
-	last   time.Time
+	cached atomic.Pointer[cachedValue[T]]
 }
 
-func (state *CachedFuncState[T]) checkExpired() bool {
+func (state *CachedFuncState[T]) cachedExpired(cached *cachedValue[T]) bool {
+	if cached == nil {
+		return true
+	}
 	if state.ttl == 0 {
 		return false
 	}
-	if state.last.IsZero() {
-		return true
-	}
-	return time.Since(state.last) > state.ttl
+	return time.Now().After(cached.expireAt)
+}
+
+func (state *CachedFuncState[T]) checkExpired() bool {
+	return state.cachedExpired(state.cached.Load())
 }
 
 func (state *CachedFuncState[T]) setResult(result T, err error) {
-	state.cached = 1
-	state.result = result
-	state.err = err
-	if state.ttl > 0 {
-		state.last = time.Now()
+	cached := &cachedValue[T]{
+		result: result,
+		err:    err,
 	}
+	if state.ttl > 0 {
+		cached.expireAt = time.Now().Add(state.ttl)
+	}
+	state.cached.Store(cached)
 }
 
-func (state *CachedFuncState[T]) callContext(ctx context.Context) (T, error) {
-	// atomic check
-	if atomic.LoadUintptr(&state.cached) == 1 {
-		// return early if the result is cached and not expired
-		if !state.checkExpired() {
-			return state.result, state.err
-		}
+func (state *CachedFuncState[T]) newBackoff() backoff.BackOff {
+	if state.backoffFactory == nil {
+		return &backoff.ZeroBackOff{}
+	}
+	return state.backoffFactory()
+}
+
+func (state *CachedFuncState[T]) execute(ctx context.Context) (T, error) {
+	result, err := state.fn(ctx)
+	if err == nil || state.retries == 0 {
+		return result, err
 	}
 
-	// lock and check again, no need atomic
-	state.Lock()
-	defer state.Unlock()
-	if state.cached == 1 {
-		// return early if the result is cached and not expired
-		if !state.checkExpired() {
-			return state.result, state.err
-		}
-	}
+	retries := state.retries
+	retryBackoff := state.newBackoff()
 
-	state.result, state.err = state.fn(ctx)
-	if state.err != nil {
-		retries := state.retries
+	for retries > 0 {
+		select {
+		case <-ctx.Done():
+			return result, context.Cause(ctx)
+		default:
+			retries--
+			delay := retryBackoff.NextBackOff()
+			if delay == backoff.Stop {
+				return result, err
+			}
+			if err := waitForBackoff(ctx, delay); err != nil {
+				return result, err
+			}
 
-	retriesLoop:
-		for retries > 0 {
-			select {
-			case <-ctx.Done():
-				return state.result, context.Cause(ctx)
-			default:
-				retries--
-				time.Sleep(state.backoff.NextBackOff())
-
-				state.result, state.err = state.fn(ctx)
-				if state.err == nil {
-					state.backoff.Reset()
-					break retriesLoop
-				}
+			result, err = state.fn(ctx)
+			if err == nil {
+				return result, nil
 			}
 		}
 	}
 
-	state.setResult(state.result, state.err)
-	return state.result, state.err
+	return result, err
+}
+
+func (state *CachedFuncState[T]) callContext(ctx context.Context) (T, error) {
+	if cached := state.cached.Load(); !state.cachedExpired(cached) {
+		return cached.result, cached.err
+	}
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if cached := state.cached.Load(); !state.cachedExpired(cached) {
+		return cached.result, cached.err
+	}
+
+	result, err := state.execute(ctx)
+	if shouldCacheResult(ctx, err) {
+		state.setResult(result, err)
+	}
+
+	return result, err
 }

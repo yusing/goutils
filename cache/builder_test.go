@@ -29,8 +29,14 @@ func TestWithRetriesExponentialBackoff(t *testing.T) {
 
 	builder := NewFunc(fn).WithRetriesExponentialBackoff(3)
 	assert.Equal(t, 3, builder.retries)
-	assert.NotNil(t, builder.backoff)
-	assert.IsType(t, &backoff.ExponentialBackOff{}, builder.backoff)
+	assert.Nil(t, builder.backoff)
+	if assert.NotNil(t, builder.backoffFactory) {
+		first := builder.backoffFactory()
+		second := builder.backoffFactory()
+		assert.IsType(t, &backoff.ExponentialBackOff{}, first)
+		assert.IsType(t, &backoff.ExponentialBackOff{}, second)
+		assert.NotSame(t, first, second)
+	}
 }
 
 func TestWithRetriesConstantBackoff(t *testing.T) {
@@ -88,6 +94,24 @@ func TestBuildWithAllOptions(t *testing.T) {
 		Build()
 
 	assert.NotNil(t, cachedFunc)
+}
+
+func TestKeyBuilderWithCleanupIntervalClamp(t *testing.T) {
+	fn := func(ctx context.Context, key string) (string, error) {
+		return key, nil
+	}
+
+	builder := NewKeyFunc(fn).WithCleanupInterval(100 * time.Millisecond)
+	assert.Equal(t, time.Second, builder.cleanupInterval)
+}
+
+func TestKeyBuilderWithCleanupIntervalPreservesLargeValue(t *testing.T) {
+	fn := func(ctx context.Context, key string) (string, error) {
+		return key, nil
+	}
+
+	builder := NewKeyFunc(fn).WithCleanupInterval(3 * time.Second)
+	assert.Equal(t, 3*time.Second, builder.cleanupInterval)
 }
 
 func TestBuilderChaining(t *testing.T) {
