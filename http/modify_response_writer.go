@@ -86,7 +86,7 @@ func (w *ModifyResponseWriter) WriteHeader(code int) {
 	}
 
 	w.modified = true
-	w.w.WriteHeader(code)
+	w.w.WriteHeader(resp.StatusCode)
 }
 
 func (w *ModifyResponseWriter) Header() http.Header {
