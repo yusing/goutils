@@ -285,8 +285,16 @@ func (rm *ResponseModifier) Write(b []byte) (int, error) {
 		if origContentLength < 0 {
 			origContentLength, _ = strconv.Atoi(rm.w.Header().Get("Content-Length"))
 		}
-		// try to pre-allocate the buffer to at least the size of the buffer b or the content length (from header or caller)
-		rm.buf = rm.bufPool.GetBufferAtLeast(max(len(b), origContentLength))
+		initCap := len(b)
+		if origContentLength > 0 {
+			initCap = max(initCap, origContentLength)
+		}
+		if rm.maxBufferedBytes > 0 {
+			initCap = min(initCap, rm.maxBufferedBytes)
+		}
+		// Keep the initial allocation bounded. Large Content-Length values should not
+		// force us to reserve the whole body before passthrough mode can trigger.
+		rm.buf = rm.bufPool.GetBufferAtLeast(initCap)
 	}
 	if rm.maxBufferedBytes > 0 && rm.buf.Len()+len(b) > rm.maxBufferedBytes {
 		h := rm.w.Header()
