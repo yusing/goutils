@@ -92,11 +92,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func newReader(i int) io.ReadCloser {
-	b := benchmarks[choices[i%len(choices)]].body
-	return io.NopCloser(bytes.NewReader(b))
-}
-
 type chunkedReadCloser struct {
 	r        io.Reader
 	rng      *mathrand.Rand

@@ -1,14 +1,16 @@
 package synk
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"slices"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 	"unsafe"
+
+	"github.com/yusing/goutils/synk/workerpool"
 )
 
 var sink atomic.Value
@@ -17,36 +19,73 @@ func escape(b []byte) {
 	sink.Store(b)
 }
 
+func deterministicJitter(i int, maxDelay time.Duration) {
+	if maxDelay <= 0 {
+		return
+	}
+	d := time.Duration((uint64(i) * 0x9e3779b97f4a7c15) % (uint64(maxDelay) + 1))
+	time.Sleep(d)
+}
+
+var cpuWorkSink atomic.Uint64
+
+//go:noinline
+func cpuWork(i, maxIter int) {
+	n := (uint64(i) * 0x9e3779b97f4a7c15) % uint64(maxIter+1)
+	x := uint64(i) | 1
+	for range n {
+		x = x*6364136223846793005 + 1442695040888963407
+	}
+	cpuWorkSink.Store(x)
+}
+
 func BenchmarkBytesPool_Get(b *testing.B) {
 	sizes := make([]int, 0, SizedPools)
 	for i := range SizedPools {
 		sizes = append(sizes, allocSize(i))
 	}
 
+	maxDelay := 50 * time.Microsecond
+
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("size-%d", size), func(b *testing.B) {
 			b.Run("unsized", func(b *testing.B) {
 				b.Cleanup(initAll)
+				pool := workerpool.New(b.Context())
 				for b.Loop() {
-					buf := slices.Grow(unsizedBytesPool.Get(), size)
-					escape(buf)
-					unsizedBytesPool.Put(buf)
+					pool.Go(func(_ context.Context, i int) {
+						buf := slices.Grow(unsizedBytesPool.Get(), size)
+						deterministicJitter(i, maxDelay)
+						escape(buf)
+						unsizedBytesPool.Put(buf)
+					})
 				}
+				pool.Wait()
 			})
 			b.Run("sized", func(b *testing.B) {
 				b.Cleanup(initAll)
 				bytesPoolWithMemory := GetSizedBytesPool()
+				pool := workerpool.New(b.Context())
 				for b.Loop() {
-					buf := bytesPoolWithMemory.GetSized(size)
-					escape(buf)
-					bytesPoolWithMemory.Put(buf)
+					pool.Go(func(_ context.Context, i int) {
+						buf := bytesPoolWithMemory.GetSized(size)
+						deterministicJitter(i, maxDelay)
+						escape(buf)
+						bytesPoolWithMemory.Put(buf)
+					})
 				}
+				pool.Wait()
 			})
 			b.Run("make", func(b *testing.B) {
+				pool := workerpool.New(b.Context())
 				for b.Loop() {
-					buf := make([]byte, size)
-					escape(buf)
+					pool.Go(func(_ context.Context, i int) {
+						buf := make([]byte, size)
+						deterministicJitter(i, maxDelay)
+						escape(buf)
+					})
 				}
+				pool.Wait()
 			})
 		})
 	}
@@ -65,36 +104,45 @@ func BenchmarkBytesPool_GetAll(b *testing.B) {
 		sizes[i] = 1 + psrng(sizedBytesPool.max-1)
 	}
 
-	b.Logf("sizes: %v", sizes)
+	maxDelay := 50 * time.Microsecond
 
 	b.Run("unsized", func(b *testing.B) {
 		b.Cleanup(initAll)
-		i := 0
+		pool := workerpool.New(b.Context())
 		for b.Loop() {
-			buf := slices.Grow(unsizedBytesPool.Get(), sizes[i%len(sizes)])
-			escape(buf)
-			unsizedBytesPool.Put(buf)
-			i++
+			pool.Go(func(_ context.Context, i int) {
+				buf := slices.Grow(unsizedBytesPool.Get(), sizes[i%len(sizes)])
+				deterministicJitter(i, maxDelay)
+				escape(buf)
+				unsizedBytesPool.Put(buf)
+			})
 		}
+		pool.Wait()
 	})
 	b.Run("sized", func(b *testing.B) {
 		b.Cleanup(initAll)
 		bytesPoolWithMemory := GetSizedBytesPool()
-		i := 0
+		pool := workerpool.New(b.Context())
 		for b.Loop() {
-			buf := bytesPoolWithMemory.GetSized(sizes[i%len(sizes)])
-			escape(buf)
-			bytesPoolWithMemory.Put(buf)
-			i++
+			pool.Go(func(_ context.Context, i int) {
+				buf := bytesPoolWithMemory.GetSized(sizes[i%len(sizes)])
+				deterministicJitter(i, maxDelay)
+				escape(buf)
+				bytesPoolWithMemory.Put(buf)
+			})
 		}
+		pool.Wait()
 	})
 	b.Run("make", func(b *testing.B) {
-		i := 0
+		pool := workerpool.New(b.Context())
 		for b.Loop() {
-			buf := make([]byte, sizes[i%len(sizes)])
-			escape(buf)
-			i++
+			pool.Go(func(_ context.Context, i int) {
+				buf := make([]byte, sizes[i%len(sizes)])
+				deterministicJitter(i, maxDelay)
+				escape(buf)
+			})
 		}
+		pool.Wait()
 	})
 
 	printPoolStats()
@@ -106,8 +154,6 @@ func BenchmarkBytesPool_GetAllExceedsMax(b *testing.B) {
 		sizes[i] = 1 + psrng(sizedBytesPool.max*2)
 	}
 
-	b.Logf("sizes: %v", sizes)
-
 	b.Run("unsized", func(b *testing.B) {
 		b.Cleanup(initAll)
 		i := 0
@@ -141,45 +187,11 @@ func BenchmarkBytesPool_GetAllExceedsMax(b *testing.B) {
 	printPoolStats()
 }
 
-// simulateWork performs realistic buffer operations that mimic HTTP body processing
-// or data transformation work. Returns a checksum to prevent compiler optimization.
-func simulateWork(buf []byte, workload int) uint64 {
-	var checksum uint64
-	length := len(buf)
-
-	switch workload {
-	case 0: // Light work: fill with pattern (like preparing response)
-		for i := range buf {
-			buf[i] = byte(i & 0xff)
-			checksum += uint64(buf[i])
-		}
-	case 1: // Medium work: read + transform (like parsing/encoding)
-		for i := 0; i < length; i += 8 {
-			end := min(i+8, length)
-			for j := i; j < end; j++ {
-				buf[j] = byte((j * 31) & 0xff)
-				checksum ^= uint64(buf[j]) << (uint(j) & 7)
-			}
-		}
-	case 2: // Heavy work: multiple passes (like compression/encryption simulation)
-		for pass := range 3 {
-			for i := 0; i < length; i += 64 {
-				end := min(i+64, length)
-				for j := i; j < end; j++ {
-					buf[j] = byte((buf[j] + byte(pass*17)) ^ byte(j))
-					checksum += uint64(buf[j]) * uint64(pass+1)
-				}
-			}
-		}
-	}
-	return checksum
-}
-
 // BenchmarkBytesPool_ConcurrentAllocations simulates real-world concurrent usage patterns
 // where a fixed number of workers continuously get/use/put buffers with realistic operations.
 func BenchmarkBytesPool_ConcurrentAllocations(b *testing.B) {
 	// Generate size distribution biased toward smaller allocations (more realistic)
-	// 50% small (4-32KB), 30% medium (32-256KB), 20% large (256KB-4MB)
+	// 50% small (2-4KB), 30% medium (32KB-544KB), 20% large (258KB-12MB)
 	sizes := make([]int, 1000)
 	for i := range sizes {
 		r := psrng(100)
@@ -193,108 +205,42 @@ func BenchmarkBytesPool_ConcurrentAllocations(b *testing.B) {
 		}
 	}
 
-	// Workload distribution: 60% light, 30% medium, 10% heavy
-	workloads := make([]int, 100)
-	for i := range workloads {
-		r := psrng(100)
-		switch {
-		case r < 60:
-			workloads[i] = 0 // light
-		case r < 90:
-			workloads[i] = 1 // medium
-		default:
-			workloads[i] = 2 // heavy
-		}
-	}
-
 	concurrencyLevels := []int{1, 2, 4, 8, 16, 32}
+	const workIterations = 500 // CPU-bound iterations to simulate buffer usage
 
 	for _, concurrency := range concurrencyLevels {
 		for _, poolType := range []string{"unsized", "sized", "make"} {
 			b.Run(fmt.Sprintf("workers-%d-%s", concurrency, poolType), func(b *testing.B) {
 				b.Cleanup(initAll)
+				b.ReportAllocs()
 
-				// Create work queue
-				workChan := make(chan int, concurrency*2)
-				var wg sync.WaitGroup
+				pool := workerpool.New(b.Context(), workerpool.WithN(concurrency))
+				for b.Loop() {
+					pool.Go(func(_ context.Context, i int) {
+						size := sizes[i%len(sizes)]
 
-				// Track allocation and work time separately
-				var totalAllocTime atomic.Int64
-				var totalWorkTime atomic.Int64
-				var checksumSink atomic.Uint64
+						var buf []byte
+						switch poolType {
+						case "unsized":
+							buf = unsizedBytesPool.GetAtLeast(size)[:size]
+						case "sized":
+							buf = sizedBytesPool.GetSized(size)
+						case "make":
+							buf = make([]byte, size)
+						}
 
-				// Start fixed pool of workers (before timer)
-				for range concurrency {
-					wg.Go(func() {
-						sizeIdx := 0
-						workloadIdx := 0
+						cpuWork(i, workIterations)
+						escape(buf)
 
-						for range workChan {
-							size := sizes[sizeIdx%len(sizes)]
-							workload := workloads[workloadIdx%len(workloads)]
-							sizeIdx++
-							workloadIdx++
-
-							// Measure allocation time
-							allocStart := time.Now()
-
-							var buf []byte
-							switch poolType {
-							case "unsized":
-								buf = slices.Grow(unsizedBytesPool.Get(), size)[:size]
-							case "sized":
-								buf = sizedBytesPool.GetSized(size)
-							case "make":
-								buf = make([]byte, size)
-							}
-
-							allocEnd := time.Now()
-							totalAllocTime.Add(int64(allocEnd.Sub(allocStart)))
-
-							// Simulate realistic buffer work (HTTP body processing, encoding, etc)
-							workStart := time.Now()
-							checksum := simulateWork(buf, workload)
-							checksumSink.Add(checksum)
-							workEnd := time.Now()
-							totalWorkTime.Add(int64(workEnd.Sub(workStart)))
-
-							escape(buf)
-
-							// Return to pool
-							switch poolType {
-							case "unsized":
-								unsizedBytesPool.Put(buf)
-							case "sized":
-								sizedBytesPool.Put(buf)
-							}
+						switch poolType {
+						case "unsized":
+							unsizedBytesPool.Put(buf)
+						case "sized":
+							sizedBytesPool.Put(buf)
 						}
 					})
 				}
-
-				b.ResetTimer()
-
-				// Feed work to workers
-				for b.Loop() {
-					workChan <- 1
-				}
-
-				close(workChan)
-				wg.Wait()
-
-				// Report detailed metrics
-				b.StopTimer()
-				avgAllocTime := time.Duration(totalAllocTime.Load() / int64(b.N))
-				avgWorkTime := time.Duration(totalWorkTime.Load() / int64(b.N))
-				avgTotalTime := avgAllocTime + avgWorkTime
-
-				b.ReportMetric(float64(avgAllocTime.Nanoseconds()), "ns/op_alloc")
-				b.ReportMetric(float64(avgWorkTime.Nanoseconds()), "ns/op_work")
-				b.ReportMetric(float64(avgTotalTime.Nanoseconds()), "ns/op_total")
-
-				// Prevent optimization
-				if checksumSink.Load() == 0 {
-					b.Fatal("checksum should not be zero")
-				}
+				pool.Wait()
 			})
 		}
 	}
