@@ -7,8 +7,10 @@ import (
 	"sync"
 )
 
-const maxHistorySize = 100
-const listenerChanBufSize = 64
+const (
+	maxHistorySize      = 100
+	listenerChanBufSize = 64
+)
 
 type History struct {
 	events [maxHistorySize]Event
@@ -48,6 +50,7 @@ func (h *History) AddAll(events []Event) {
 	for _, event := range events {
 		h.addToArrayLocked(event)
 	}
+
 	listeners := h.listenersSnapshotLocked()
 	h.mu.Unlock()
 
@@ -65,6 +68,7 @@ func (h *History) addToArrayLocked(event Event) {
 func (h *History) Clear() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+
 	h.events = [maxHistorySize]Event{}
 	h.index = 0
 	h.count = 0

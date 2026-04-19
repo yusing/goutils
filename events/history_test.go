@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -49,6 +51,17 @@ func decodeEvents(t *testing.T, data []byte) []Event {
 	return out
 }
 
+func newTimedEvent(ts int64, category, action string, data any) Event {
+	return Event{
+		ID:        strconv.FormatInt(ts, 10),
+		Timestamp: time.Unix(0, ts),
+		Level:     LevelInfo,
+		Category:  category,
+		Action:    action,
+		Data:      data,
+	}
+}
+
 func TestListenCancelIsIdempotent(t *testing.T) {
 	t.Parallel()
 
@@ -83,14 +96,12 @@ func TestConcurrentAddAndCancelDoesNotPanic(t *testing.T) {
 	}
 
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 2_000 {
 				_, _, cancel := h.SnapshotAndListen()
 				cancel()
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -197,5 +208,143 @@ func TestGetReturnsNewestWindowInOrder(t *testing.T) {
 	require.Len(t, events, maxHistorySize)
 	for i := range maxHistorySize {
 		require.Equal(t, i+20, events[i].Data)
+	}
+}
+
+func TestGetKeepsGlobalHistoryBoundAcrossCategories(t *testing.T) {
+	t.Parallel()
+
+	h := NewHistory()
+	for i := range maxHistorySize + 20 {
+		category := "cat-a"
+		if i%2 == 1 {
+			category = "cat-b"
+		}
+		h.Add(newTimedEvent(int64(i), category, "global-window", i))
+	}
+
+	events := h.Get()
+	require.Len(t, events, maxHistorySize)
+	for i := range maxHistorySize {
+		require.Equal(t, i+20, events[i].Data)
+	}
+}
+
+func TestGetDoesNotObservePartialAddAll(t *testing.T) {
+	t.Parallel()
+
+	for attempt := range 200 {
+		h := NewHistory()
+
+		batch := make([]Event, maxHistorySize)
+		for i := range batch {
+			batch[i] = newTimedEvent(int64(i+1), "category-"+strconv.Itoa(i), "batch", i)
+		}
+
+		done := make(chan struct{})
+		go func() {
+			h.AddAll(batch)
+			close(done)
+		}()
+
+		for {
+			select {
+			case <-done:
+				goto nextAttempt
+			default:
+			}
+
+			snapshot := h.Get()
+			require.Truef(
+				t,
+				len(snapshot) == 0 || len(snapshot) == len(batch),
+				"attempt=%d observed torn AddAll snapshot len=%d",
+				attempt,
+				len(snapshot),
+			)
+			runtime.Gosched()
+		}
+
+	nextAttempt:
+		require.Len(t, h.Get(), len(batch))
+	}
+}
+
+func BenchmarkHistoryAdd(b *testing.B) {
+	for _, concurrency := range []int{2, 4, 8, 16, 32, 64} {
+		b.Run("concurrency="+strconv.Itoa(concurrency), func(b *testing.B) {
+			h := NewHistory()
+			event := NewEvent(LevelInfo, "bench-add", "add", nil)
+
+			stopProducer := make(chan struct{})
+
+			var producerWG sync.WaitGroup
+			for range concurrency {
+				producerWG.Go(func() {
+					for {
+						select {
+						case <-stopProducer:
+							return
+						default:
+							h.Add(event)
+						}
+					}
+				})
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				h.Add(event)
+			}
+			b.StopTimer()
+
+			close(stopProducer)
+			producerWG.Wait()
+		})
+	}
+}
+
+func BenchmarkHistoryListenReceive(b *testing.B) {
+	for _, concurrency := range []int{2, 4, 8, 16, 32, 64} {
+		b.Run("concurrency="+strconv.Itoa(concurrency), func(b *testing.B) {
+			h := NewHistory()
+
+			listenerChs := make([]<-chan Event, concurrency)
+			for i := range concurrency {
+				_, ch, cancel := h.SnapshotAndListen()
+				listenerChs[i] = ch
+				defer cancel()
+			}
+
+			stopProducer := make(chan struct{})
+			var producerWG sync.WaitGroup
+
+			event := NewEvent(LevelInfo, "bench-listen", "listen", nil)
+			for range concurrency {
+				producerWG.Go(func() {
+					for {
+						select {
+						case <-stopProducer:
+							return
+						default:
+							h.Add(event)
+						}
+					}
+				})
+			}
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				for _, ch := range listenerChs {
+					<-ch
+				}
+			}
+			b.StopTimer()
+
+			close(stopProducer)
+			producerWG.Wait()
+		})
 	}
 }
