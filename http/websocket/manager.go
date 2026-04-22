@@ -300,9 +300,11 @@ func (cm *Manager) close() {
 	cm.pingCheckTicker.Stop()
 
 	if err := cm.err.Load(); err != nil {
-		log.Debug().Caller(4).Msg("Closing WebSocket connection: " + err.Error())
-	} else {
-		log.Debug().Caller(4).Msg("Closing WebSocket connection")
+		switch {
+		case errors.Is(err, context.Canceled), errors.Is(err, net.ErrClosed):
+		default:
+			log.Debug().Caller(4).Err(err).Msg("Closing WebSocket connection with error")
+		}
 	}
 }
 

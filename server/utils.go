@@ -75,7 +75,7 @@ func setLogger[Server httpServer](srv Server, logger *zerolog.Logger) {
 	case *http.Server:
 		srv.ErrorLog = log.New(logger, "", 0)
 	case *http3.Server:
-		logOpts := slogzerolog.Option{Level: slog.LevelDebug, Logger: logger}
+		logOpts := slogzerolog.Option{Logger: logger}
 		srv.Logger = slog.New(logOpts.NewZerologHandler())
 	}
 }
