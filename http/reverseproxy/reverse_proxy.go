@@ -10,7 +10,6 @@ package reverseproxy
 // Copyright (c) 2024 yusing
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -475,17 +474,7 @@ retry:
 			}
 		}
 		p.errorHandler(rw, outreq, err, false)
-		res = &http.Response{
-			Status:     http.StatusText(http.StatusBadGateway),
-			StatusCode: http.StatusBadGateway,
-			Proto:      req.Proto,
-			ProtoMajor: req.ProtoMajor,
-			ProtoMinor: req.ProtoMinor,
-			Header:     http.Header{},
-			Body:       io.NopCloser(bytes.NewReader([]byte("Origin server is not reachable."))),
-			Request:    req,
-			TLS:        req.TLS,
-		}
+		res = newOriginUnreachableResponse(req)
 	}
 
 	if p.AccessLogger != nil {
