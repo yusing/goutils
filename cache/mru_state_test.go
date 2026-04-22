@@ -281,6 +281,91 @@ func TestCachedContextKeyFuncState_BackoffStopStopsRetries(t *testing.T) {
 	assert.Equal(t, int32(1), callCount.Load())
 }
 
+func TestCachedContextKeyFuncState_TTLWaitsForPublishedInFlightEntry(t *testing.T) {
+	t.Parallel()
+
+	var calls atomic.Int32
+	state := &CachedContextKeyFuncState[int, int]{
+		CachedKeyFuncBuilder: CachedKeyFuncBuilder[int, int]{
+			CachedFuncConfig: CachedFuncConfig{ttl: time.Second},
+			fn: func(ctx context.Context, key int) (int, error) {
+				calls.Add(1)
+				return 99, nil
+			},
+		},
+		entries: xsync.NewMap[int, *CacheEntry[int]](),
+	}
+
+	entry := &CacheEntry[int]{}
+	entry.refreshMu.Lock()
+	state.entries.Store(1, entry)
+
+	resultCh := make(chan int, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		result, err := state.callContext(t.Context(), 1)
+		resultCh <- result
+		errCh <- err
+	}()
+
+	select {
+	case result := <-resultCh:
+		t.Fatalf("call returned before published entry became ready: got %d", result)
+	case err := <-errCh:
+		t.Fatalf("call returned before published entry became ready: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	entry.cached.Store(&cachedValue[int]{
+		result:   42,
+		expireAt: time.Now().Add(time.Second),
+	})
+	entry.refreshMu.Unlock()
+
+	assert.NoError(t, <-errCh)
+	assert.Equal(t, 42, <-resultCh)
+	assert.Zero(t, calls.Load(), "waiter should not recompute while the first result is still in flight")
+}
+
+func TestCachedContextKeyFuncState_ColdKeyConcurrentNeverReturnsIntZero(t *testing.T) {
+	t.Parallel()
+
+	const (
+		rounds = 40
+		n      = 64
+		key    = 3
+		want   = key * 7
+	)
+
+	for round := range rounds {
+		var calls atomic.Int32
+		fn := func(ctx context.Context, k int) (int, error) {
+			calls.Add(1)
+			time.Sleep(2 * time.Millisecond)
+			return k * 7, nil
+		}
+
+		cached := NewKeyFunc(fn).Build()
+		results := make([]int, n)
+		errs := make([]error, n)
+
+		var wg sync.WaitGroup
+		for i := range n {
+			i := i
+			wg.Go(func() {
+				results[i], errs[i] = cached(t.Context(), key)
+			})
+		}
+		wg.Wait()
+
+		for i := range n {
+			assert.NoError(t, errs[i])
+			assert.Equalf(t, want, results[i], "round %d goroutine %d returned the zero value or a stale result", round, i)
+		}
+		assert.Equalf(t, int32(1), calls.Load(), "round %d should compute the cold key once", round)
+	}
+}
+
 func TestCachedContextKeyFuncState_ConcurrentAccess(t *testing.T) {
 	callCounts := make(map[int]int)
 	callCountMutex := sync.Mutex{}

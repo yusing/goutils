@@ -269,6 +269,44 @@ func TestCachedFuncState_BackoffStopStopsRetries(t *testing.T) {
 	assert.Equal(t, int32(1), callCount.Load())
 }
 
+func TestCachedFuncState_ColdConcurrentNeverReturnsIntZero(t *testing.T) {
+	t.Parallel()
+
+	const (
+		rounds = 40
+		n      = 64
+		want   = 42
+	)
+
+	for round := range rounds {
+		var calls atomic.Int32
+		fn := func(ctx context.Context) (int, error) {
+			calls.Add(1)
+			time.Sleep(2 * time.Millisecond)
+			return want, nil
+		}
+
+		cached := NewFunc(fn).Build()
+		results := make([]int, n)
+		errs := make([]error, n)
+
+		var wg sync.WaitGroup
+		for i := range n {
+			i := i
+			wg.Go(func() {
+				results[i], errs[i] = cached(context.Background())
+			})
+		}
+		wg.Wait()
+
+		for i := range n {
+			assert.NoError(t, errs[i])
+			assert.Equalf(t, want, results[i], "round %d goroutine %d returned the zero value or a stale result", round, i)
+		}
+		assert.Equalf(t, int32(1), calls.Load(), "round %d should compute the cold cache once", round)
+	}
+}
+
 func TestCachedFuncState_ConcurrentAccess(t *testing.T) {
 	callCount := 0
 	fn := func(ctx context.Context) (int, error) {
