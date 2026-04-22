@@ -15,6 +15,8 @@ type cachedValue[T any] struct {
 	expireAt time.Time
 }
 
+const singleValueCacheKey = "<func>"
+
 type CachedFuncState[T any] struct {
 	CachedFuncBuilder[T]
 
@@ -90,14 +92,23 @@ func (state *CachedFuncState[T]) execute(ctx context.Context) (T, error) {
 
 func (state *CachedFuncState[T]) callContext(ctx context.Context) (T, error) {
 	if cached := state.cached.Load(); !state.cachedExpired(cached) {
+		logCacheHit(singleValueCacheKey, cached.result, cached.err)
 		return cached.result, cached.err
 	}
 
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	if cached := state.cached.Load(); !state.cachedExpired(cached) {
+	cached := state.cached.Load()
+	if !state.cachedExpired(cached) {
+		logCacheHit(singleValueCacheKey, cached.result, cached.err)
 		return cached.result, cached.err
+	}
+	if cached != nil {
+		logCacheExpiredEntry(singleValueCacheKey, cached.result, cached.err)
+	} else {
+		logCacheMiss(singleValueCacheKey)
+		logCacheUsage(1, 1)
 	}
 
 	result, err := state.execute(ctx)

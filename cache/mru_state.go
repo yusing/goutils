@@ -39,6 +39,12 @@ type cleanupCandidate[K comparable] struct {
 	seq uint64
 }
 
+type cacheEvictedKV struct {
+	key    any
+	result any
+	err    error
+}
+
 func newCachedContextKeyFuncState[T any, K comparable](builder CachedKeyFuncBuilder[T, K]) *CachedContextKeyFuncState[T, K] {
 	accessLogCap := initialAccessLogCap(builder.maxEntries)
 	state := &CachedContextKeyFuncState[T, K]{
@@ -134,8 +140,15 @@ func (state *CachedContextKeyFuncState[T, K]) Cleanup() {
 		// Once the entry is unscheduled, a concurrent touch may enqueue a fresher candidate.
 		// Deleting here only races with that enqueue path; a later load either sees no entry or
 		// a replacement entry, and stale candidates are ignored by the Load/accessSeq checks above.
-		state.entries.Delete(candidate.key)
-		overflow--
+		if removed, ok := state.entries.LoadAndDelete(candidate.key); ok {
+			evicted := cacheEvictedKV{key: candidate.key}
+			if cached := removed.cached.Load(); cached != nil {
+				evicted.result = cached.result
+				evicted.err = cached.err
+			}
+			logCacheEvicted(state.maxEntries, state.entries.Size(), evicted)
+			overflow--
+		}
 	}
 
 	state.restoreAccessLog(survivors)
@@ -148,18 +161,30 @@ func newCacheEntry[T any]() (entry *CacheEntry[T], cancel bool) {
 func (state *CachedContextKeyFuncState[T, K]) callContext(ctx context.Context, key K) (T, error) {
 	entry, loaded := state.entries.LoadOrCompute(key, newCacheEntry[T])
 	if loaded {
+		// LoadOrCompute may publish a cold entry before its creator acquires refreshMu and
+		// stores the first cached value. Re-check under refreshMu so waiters never treat an
+		// in-flight first compute as a zero-value/expired hit.
 		if cached := entry.cached.Load(); !state.checkExpired(cached) {
 			state.touchEntry(key, entry)
+			logCacheHit(key, cached.result, cached.err)
 			return cached.result, cached.err
 		}
+	} else {
+		logCacheMiss(key)
+		logCacheUsage(state.entries.Size(), state.maxEntries)
 	}
 
 	entry.refreshMu.Lock()
 	defer entry.refreshMu.Unlock()
 
-	if cached := entry.cached.Load(); !state.checkExpired(cached) {
+	cached := entry.cached.Load()
+	if !state.checkExpired(cached) {
 		state.touchEntry(key, entry)
+		logCacheHit(key, cached.result, cached.err)
 		return cached.result, cached.err
+	}
+	if loaded && cached != nil {
+		logCacheExpiredEntry(key, cached.result, cached.err)
 	}
 
 	result, err := state.execute(ctx, key)

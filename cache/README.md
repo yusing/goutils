@@ -89,3 +89,10 @@ fetchUserData := cache.NewKeyFunc(func(ctx context.Context, userID string) (stri
 
 user, _ := fetchUserData(ctx, "user-123") // caches per key; WithMaxEntries caps the number of live entries
 ```
+
+
+## Debug logging
+
+When built with `-tags=debug`, the cache package emits debug logs for cache hits, misses, TTL-triggered recomputes, usage, and keyed-cache overflow evictions. Logged keys and values are summarized through the same formatter: long strings and `[]byte` values are truncated, large slices and maps are capped, structs are expanded into exported fields, and nested content is summarized recursively so large payloads do not flood the logs.
+
+Without the `debug` build tag, these helpers compile to no-op stubs.
