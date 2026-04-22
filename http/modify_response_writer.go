@@ -60,12 +60,9 @@ func (w *ModifyResponseWriter) WriteHeader(code int) {
 		w.w.WriteHeader(code)
 	}
 
-	defer func() {
+	if w.modifier == nil || w.modified {
 		w.headerSent = true
 		w.code = code
-	}()
-
-	if w.modifier == nil || w.modified {
 		w.w.WriteHeader(code)
 		return
 	}
@@ -81,11 +78,15 @@ func (w *ModifyResponseWriter) WriteHeader(code int) {
 	if err := w.modifier(&resp); err != nil {
 		w.modifierErr = fmt.Errorf("response modifier error: %w", err)
 		resp.Status = w.modifierErr.Error()
+		w.headerSent = true
+		w.code = http.StatusInternalServerError
 		w.w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
 
 	w.modified = true
+	w.headerSent = true
+	w.code = resp.StatusCode
 	w.w.WriteHeader(resp.StatusCode)
 }
 
