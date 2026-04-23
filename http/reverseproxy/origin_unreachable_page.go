@@ -55,3 +55,12 @@ func newOriginUnreachableResponse(req *http.Request) *http.Response {
 		TLS:           req.TLS,
 	}
 }
+
+// WriteDebugOriginUnreachablePage writes the minified origin-unreachable HTML and no-store
+// headers, with status 200 for local preview (e.g. the app debug server).
+func WriteDebugOriginUnreachablePage(w http.ResponseWriter) {
+	setNoStoreHeaders(w.Header())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(originUnreachablePage)
+}
