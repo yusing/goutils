@@ -124,7 +124,7 @@ func TestH2CRoundTripper_AcceptsH2CSchemeAndRemovesUpgradeHeaders(t *testing.T) 
 	}
 	req.Header.Set("Connection", "Upgrade, HTTP2-Settings")
 	req.Header.Set("Upgrade", "h2c")
-	req.Header.Set("HTTP2-Settings", "")
+	req.Header.Set("HTTP2-Settings", "sentinel")
 	req.Header.Set("Te", "trailers")
 
 	resp, err := newH2CRoundTripper(&http.Transport{}).RoundTrip(req)

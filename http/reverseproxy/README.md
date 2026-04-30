@@ -35,7 +35,7 @@ import (
 )
 
 // Create proxy with godoxy's logger
-rp := reverseproxy.NewReverseProxy("backend", target, nil)
+rp := reverseproxy.NewReverseProxy("backend", target, http.DefaultTransport)
 rp.Logger = logging.Logger  // Uses godoxy's zerolog logger
 rp.AccessLogger = logging.AccessLogger  // Uses godoxy's access logging
 ```
