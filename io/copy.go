@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	strutils "github.com/yusing/goutils/strings"
 	"github.com/yusing/goutils/synk"
 )
 
@@ -146,8 +147,10 @@ func shouldFlushHTTPWriter(rw http.ResponseWriter) bool {
 	contentType := header.Get("Content-Type")
 	if contentType != "" {
 		mediaType, _, err := mime.ParseMediaType(contentType)
-		if err == nil && strings.EqualFold(mediaType, "text/event-stream") {
-			return true
+		if err == nil {
+			if strings.EqualFold(mediaType, "text/event-stream") || strutils.HasPrefixFold(mediaType, "application/grpc") {
+				return true
+			}
 		}
 	}
 
@@ -163,5 +166,5 @@ func shouldFlushHTTPWriter(rw http.ResponseWriter) bool {
 		}
 	}
 
-	return false
+	return header.Get("Content-Length") == ""
 }

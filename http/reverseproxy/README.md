@@ -10,7 +10,8 @@ This package extends Go's `net/http/httputil/reverse_proxy` with:
 - **Access logging**: Built-in support for `accesslog.AccessLogger`
 - **Scheme mismatch handling**: Custom callback for HTTP/HTTPS scheme mismatches
 - **Enhanced header manipulation**: X-Forwarded headers, WebSocket header normalization
-- **HTTP/2 h2c support**: Cleartext HTTP/2 support
+- **HTTP/2 h2c support**: Cleartext HTTP/2 prior-knowledge support for `h2c://` targets
+- **gRPC over h2c**: Preserves `TE: trailers`, trailers, and streaming-friendly full-duplex behavior
 - **Error suppression**: Suppresses certain unimportant/expected errors to prevent logging them
 - **Performance optimizations**: Uses `CopyCloseContext` with sync.Pool for efficient body copying, reducing GC pressure
 
@@ -73,7 +74,7 @@ type ProxyRequest struct {
 func NewReverseProxy(name string, target *url.URL, transport http.RoundTripper) *ReverseProxy
 ```
 
-Creates a proxy. Transport can be `nil` to use default.
+Creates a proxy. Transport must be non-nil.
 
 #### SetXForwarded
 
@@ -102,23 +103,37 @@ Main request handler with automatic:
 
 ```go
 target, _ := url.Parse("http://localhost:8080")
-rp := reverseproxy.NewReverseProxy("backend", target, nil)
+rp := reverseproxy.NewReverseProxy("backend", target, http.DefaultTransport)
 http.Handle("/", rp)
 ```
+
+### h2c / gRPC Setup
+
+Use an `h2c://` target for cleartext HTTP/2 backends. The proxy rewrites the outbound URL to `http://` for the transport, dials the backend without TLS, and speaks HTTP/2 with prior knowledge. This is the mode required by most cleartext gRPC upstreams.
+
+```go
+target, _ := url.Parse("h2c://localhost:50051")
+rp := reverseproxy.NewReverseProxy("grpc-backend", target, http.DefaultTransport)
+http.Handle("/", rp)
+```
+
+For gRPC requests, `TE: trailers` is preserved and backend trailers such as `Grpc-Status` are forwarded to the client.
+
+The `integrationtest/` submodule contains real h2c gRPC proxy tests. It is a separate module so gRPC test-only dependencies do not become dependencies of the reverse proxy package itself.
 
 ### With GoDoxy Logging
 
 ```go
 import "github.com/yusing/godoxy/internal/logging"
 
-rp := reverseproxy.NewReverseProxy("backend", target, nil)
+rp := reverseproxy.NewReverseProxy("backend", target, http.DefaultTransport)
 rp.Logger = logging.With().Str("component", "reverse_proxy").Logger()
 ```
 
 ### With Scheme Mismatch Detection
 
 ```go
-rp := reverseproxy.NewReverseProxy("backend", target, nil)
+rp := reverseproxy.NewReverseProxy("backend", target, http.DefaultTransport)
 rp.OnSchemeMisMatch = func() bool {
     rp.Logger.Warn().Msg("Scheme mismatch detected")
     return true  // Retry with different scheme
@@ -140,7 +155,8 @@ rewriteFunc := func(pr *reverseproxy.ProxyRequest) {
 - **Context propagation**: Properly handles request cancellation via context
 
 - **HTTP/1.1**: Full support
-- **HTTP/2**: h2c cleartext support
+- **HTTP/2**: h2c cleartext prior-knowledge support
+- **gRPC**: Cleartext gRPC over h2c with trailer forwarding
 - **WebSocket**: Automatic upgrade handling with header normalization
 
 ## Header Handling

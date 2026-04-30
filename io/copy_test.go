@@ -70,3 +70,32 @@ func TestCopyClose_FlushesChunkedResponsesWithoutContentLength(t *testing.T) {
 	require.Positive(t, dst.writes)
 	require.Equal(t, dst.writes, dst.flushCount)
 }
+
+func TestCopyClose_FlushesStreamingResponsesWithoutLength(t *testing.T) {
+	dst := &flushCountingResponseWriter{}
+	dst.Header().Set("Content-Type", "application/octet-stream")
+
+	src := strings.NewReader("streaming body")
+
+	err := CopyClose(dst, src, -1)
+	require.NoError(t, err)
+	require.Positive(t, dst.writes)
+	require.Equal(t, dst.writes, dst.flushCount)
+}
+
+func TestCopyClose_FlushesGRPCResponses(t *testing.T) {
+	for _, contentType := range []string{"application/grpc", "application/grpc+proto"} {
+		t.Run(contentType, func(t *testing.T) {
+			dst := &flushCountingResponseWriter{}
+			dst.Header().Set("Content-Type", contentType)
+			dst.Header().Set("Content-Length", "12")
+
+			src := strings.NewReader("hello world!")
+
+			err := CopyClose(dst, src, 4)
+			require.NoError(t, err)
+			require.Positive(t, dst.writes)
+			require.Equal(t, dst.writes, dst.flushCount)
+		})
+	}
+}
