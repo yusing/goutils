@@ -351,7 +351,6 @@ func TestCachedContextKeyFuncState_ColdKeyConcurrentNeverReturnsIntZero(t *testi
 
 		var wg sync.WaitGroup
 		for i := range n {
-			i := i
 			wg.Go(func() {
 				results[i], errs[i] = cached(t.Context(), key)
 			})
@@ -797,7 +796,6 @@ func TestCachedContextKeyFuncState_CleanupConcurrentContentionStress(t *testing.
 
 	var wg sync.WaitGroup
 	for worker := range 8 {
-		worker := worker
 		wg.Go(func() {
 			for i := range iterations {
 				key := (worker*iterations + i) % totalKeys
