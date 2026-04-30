@@ -182,15 +182,24 @@ type h2cRoundTripper struct {
 	h2c *http2.Transport
 }
 
+type closeIdleConnectionsRoundTripper interface {
+	CloseIdleConnections()
+}
+
 func newH2CRoundTripper(base http.RoundTripper) http.RoundTripper {
 	dialCtx := defaultH2CDialer.DialContext
-	if tr, ok := base.(*http.Transport); ok && tr.DialContext != nil {
-		dialCtx = tr.DialContext
+	disableCompression := false
+	if tr, ok := base.(*http.Transport); ok {
+		if tr.DialContext != nil {
+			dialCtx = tr.DialContext
+		}
+		disableCompression = tr.DisableCompression
 	}
 	return &h2cRoundTripper{
 		h1: base,
 		h2c: &http2.Transport{
-			AllowHTTP: true,
+			AllowHTTP:          true,
+			DisableCompression: disableCompression,
 			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 				return dialCtx(ctx, network, addr)
 			},
@@ -204,10 +213,58 @@ func (rt *h2cRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	if req == nil || req.URL == nil {
 		return rt.h1.RoundTrip(req)
 	}
-	if req.URL.Scheme == "http" {
-		return rt.h2c.RoundTrip(req)
+	switch req.URL.Scheme {
+	case "h2c":
+		return rt.h2c.RoundTrip(prepareH2CRequest(req))
+	case "http":
+		return rt.h2c.RoundTrip(prepareH2CRequest(req))
+	default:
+		return rt.h1.RoundTrip(req)
 	}
-	return rt.h1.RoundTrip(req)
+}
+
+func (rt *h2cRoundTripper) CloseIdleConnections() {
+	rt.h2c.CloseIdleConnections()
+	if h1, ok := rt.h1.(closeIdleConnectionsRoundTripper); ok {
+		h1.CloseIdleConnections()
+	}
+}
+
+func cloneURL(u *url.URL) *url.URL {
+	if u == nil {
+		return nil
+	}
+	clone := *u
+	return &clone
+}
+
+func prepareH2CRequest(req *http.Request) *http.Request {
+	rewriteScheme := req.URL.Scheme == "h2c"
+	removeUpgradeHeaders := hasH2CUpgradeHeaders(req.Header)
+	if !rewriteScheme && !removeUpgradeHeaders {
+		return req
+	}
+
+	h2cReq := new(http.Request)
+	*h2cReq = *req
+
+	if rewriteScheme {
+		h2cReq.URL = cloneURL(req.URL)
+		h2cReq.URL.Scheme = "http"
+	}
+
+	if removeUpgradeHeaders {
+		h2cReq.Header = req.Header.Clone()
+		httpheaders.RemoveHopByHopHeaders(h2cReq.Header)
+		if httpguts.HeaderValuesContainsToken(req.Header["Te"], "trailers") {
+			h2cReq.Header.Set("Te", "trailers")
+		}
+	}
+	return h2cReq
+}
+
+func hasH2CUpgradeHeaders(header http.Header) bool {
+	return strings.EqualFold(httpheaders.UpgradeType(header), "h2c") || header.Get("HTTP2-Settings") != ""
 }
 
 func copyHeader(dst, src http.Header) {
@@ -386,7 +443,7 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 
 	// After stripping all the hop-by-hop connection headers above, add back any
 	// necessary for protocol upgrades, such as for websockets.
-	if reqUpType != "" {
+	if reqUpType != "" && !(p.useH2C && strings.EqualFold(reqUpType, "h2c")) {
 		outreq.Header.Set("Connection", "Upgrade")
 		outreq.Header.Set("Upgrade", reqUpType)
 
@@ -428,6 +485,14 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 		// If the outbound request doesn't have a User-Agent header set,
 		// don't send the default Go HTTP client User-Agent.
 		outreq.Header.Set("User-Agent", "")
+	}
+
+	if outreq.Body != nil {
+		// gRPC and h2c streams can read the request body while response headers
+		// and DATA frames flow back from the backend. HTTP/2 already permits
+		// this, while HTTP/1 needs an explicit opt-in to avoid net/http draining
+		// the request body before response writes.
+		_ = http.NewResponseController(rw).EnableFullDuplex()
 	}
 
 	var (

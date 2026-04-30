@@ -292,7 +292,6 @@ func TestCachedFuncState_ColdConcurrentNeverReturnsIntZero(t *testing.T) {
 
 		var wg sync.WaitGroup
 		for i := range n {
-			i := i
 			wg.Go(func() {
 				results[i], errs[i] = cached(context.Background())
 			})
