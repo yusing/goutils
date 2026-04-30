@@ -184,13 +184,18 @@ type h2cRoundTripper struct {
 
 func newH2CRoundTripper(base http.RoundTripper) http.RoundTripper {
 	dialCtx := defaultH2CDialer.DialContext
-	if tr, ok := base.(*http.Transport); ok && tr.DialContext != nil {
-		dialCtx = tr.DialContext
+	disableCompression := false
+	if tr, ok := base.(*http.Transport); ok {
+		if tr.DialContext != nil {
+			dialCtx = tr.DialContext
+		}
+		disableCompression = tr.DisableCompression
 	}
 	return &h2cRoundTripper{
 		h1: base,
 		h2c: &http2.Transport{
-			AllowHTTP: true,
+			AllowHTTP:          true,
+			DisableCompression: disableCompression,
 			DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
 				return dialCtx(ctx, network, addr)
 			},
