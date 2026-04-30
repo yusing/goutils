@@ -1,12 +1,14 @@
 # goutils/synk
 
-A pool of bytes buffers that are reused instead of allocated and freed.
+A pool of byte buffers that are reused instead of allocated and freed.
 
 ## Usage
 
 ```go
-sizedPool := pool.GetSizedPool()
-unsizedPool := pool.GetUnsizedPool()
+import "github.com/yusing/goutils/synk"
+
+sizedPool := synk.GetSizedBytesPool()
+unsizedPool := synk.GetUnsizedBytesPool()
 
 // as []byte
 buf := sizedPool.GetSized(size)
@@ -15,162 +17,131 @@ defer sizedPool.Put(buf)
 buf = unsizedPool.Get()
 defer unsizedPool.Put(buf)
 
+// Unsized: grow backing store when the default capacity is not enough
+buf = unsizedPool.GetAtLeast(n)
+defer unsizedPool.Put(buf)
+
 // as *bytes.Buffer
-buf := unsizedPool.GetBuffer()
+buf = unsizedPool.GetBuffer()
 defer unsizedPool.PutBuffer(buf)
 
-buf := sizedPool.GetSizedBuffer(size)
-defer sizedPool.PutSizedBuffer(buf)
+buf = unsizedPool.GetBufferAtLeast(n)
+defer unsizedPool.PutBuffer(buf)
+
+buf = sizedPool.GetBuffer(size)
+defer sizedPool.PutBuffer(buf)
 ```
+
+For sizes in the sized pool’s normal range, **do not append** to the slice returned from `GetSized`; the implementation may rely on exact length and capacity for pooling (`GetSized` documents this as undefined behavior if you append).
 
 ## Design Philosophy
 
 This pool implementation follows a tiered memory management strategy with several key goals:
 
-- Minimize allocations and reduce GC pressure - Reuse buffers instead of allocating new ones
-- Reduce memory waste - Match buffer sizes to actual needs through tiered sizing
-- Prevent memory leaks - Use weak references to allow GC cleanup
-- High performance - Use lock-free channels and unsafe optimizations
+- Minimize allocations and reduce GC pressure — reuse buffers instead of allocating new ones
+- Reduce memory waste — match buffer sizes to actual needs through tiered sizing
+- Prevent memory leaks — use weak references so collected buffers can disappear from pool slots
+- High performance — use buffered channels and `weak`/`unsafe` plumbing with minimal locking
 
 ## Core Architecture
 
-### Dual Pool System
+### Dual pool system
 
-#### UnsizedBytesPool
+#### `UnsizedBytesPool`
 
-- Single pool for general-purpose buffers
-- All buffers start at MinAllocSize (4KB)
-- Good for variable-size use cases
+- Single channel-backed pool for general-purpose buffers
+- New buffers start at `MinAllocSize` (4 KiB)
+- Suited to variable-size use cases (`io.Copy`, and similar)
 
-#### SizedBytesPool
+#### `SizedBytesPool`
 
-- 11 tiered pools: 4KB, 8KB, 16KB, 32KB, 64KB, 128KB, 256KB, 512KB, 1MB, 2MB, 4MB
-- Plus a large pool for buffers >4MB (very large buffers are rare)
-- Reduces memory waste by size-matching
+- A **small-size channel** (`smallPool`) for requested lengths **below** the smallest tier capacity (see tiers below)
+- **Eleven tiered pools** whose nominal capacities are `allocSizes[i] = 1024 * (2 << i)` for `i = 0 … 10` (2 KiB through 2 MiB)
+- Requests **larger** than the largest tier allocate a dedicated `[]byte` with `make`; on `Put`, oversize backing stores are **split in half** recursively until each piece fits a tier (large allocations are rare)
 
-### Weak Reference Mechanism
+### Weak reference mechanism
 
-The pool uses `weak.Pointer[[]byte]`
+The pool stores `weakBuf` values in channels:
 
 ```go
-type weakBuf = weak.Pointer[[]byte]
-
-func makeWeak(b *[]byte) weakBuf {
-    return weak.Make(b)
+type weakBuf struct {
+	ptr weak.Pointer[byte]
+	cap int
 }
 ```
 
-Goal:
+`slices` are not weak-referenced directly; the data pointer and capacity are stored so a live `[]byte` can be rebuilt with `unsafe.Slice` when the weak pointer is still valid.
 
-If the GC needs memory and no strong references exist to a buffer, it can be collected even though the buffer is still in the pool channel. This prevents memory leaks when pools are underutilized.
+If the GC collects the byte array while it is only weak-reachable, `getBufFromWeak` returns `nil` and the pool discards that slot and tries another buffer.
 
-## Sized Pool Allocation Strategy
-
-### Pool Index Calculation
+### Pool index
 
 ```go
-func (p *SizedBytesPool) poolIdx(size int) int {
-    if size <= 0 {
-        return 0
-    }
-    return min(SizedPools-1, max(0, bits.Len(uint(size-1))-11))
+func poolIdx(size int) int {
+	if size <= 0 {
+		return 0
+	}
+	return min(SizedPools-1, max(0, bits.Len(uint(size-1))-11))
 }
 ```
 
-This uses bit manipulation to find the appropriate tier:
-`bits.Len(size-1)` finds the position of the highest set bit
-Subtract 11 to align with 4KB (2^12) base size
-Maps sizes efficiently to the nearest power-of-2 tier
+`bits.Len(size-1)` locates the highest set bit; subtracting 11 aligns indexing with the tier scale. `poolIdx` maps a **capacity** (or requested size) to the smallest tier that can hold it.
 
-### Smart Buffer Splitting
+### Smart buffer splitting (`GetSized`)
 
-When a larger buffer is retrieved but only part is needed, the excess is returned to the pool:
+When a reused buffer is larger than the requested length, the tail may be returned to the pool:
 
 ```go
 remainingSize := capB - size
-if remainingSize > p.min { // only split if remainder is useful
-    p.put(b[size:], true)  // return excess to pool
-    front := b[:size:size]  // use requested portion
-    storeFullCap(front, capB)  // remember original capacity
-    return front
+if remainingSize >= p.min {
+	p.put(b[size:], true)
+	return b[:size:size]
 }
+return b[:size]
 ```
 
-### Capacity Restoration System
+- If the **remainder** is at least `p.min`, the tail is `Put` back and the caller gets `b[:size:size]` so the visible **capacity equals the length** (consistent pooling for that logical size).
+- If the remainder would be **smaller than `p.min`**, it is not pooled; the caller receives `b[:size]` and keeps the full backing capacity so `Put` can still route the buffer to the correct tier.
 
-The pool maintains full capacity information for buffers that have been sliced:
-
-```go
-func storeFullCap(b []byte, c int) {
-    if c == cap(b) {
-        return  // no change needed
-    }
-    ptr := sliceStruct(&b).ptr
-    sizedFullCaps.Store(ptr, c)  // store original capacity
-}
-
-func restoreFullCap(b *[]byte) {
-    ptr := sliceStruct(b).ptr
-    if fullCap, ok := sizedFullCaps.LoadAndDelete(ptr); ok {
-        setCap(b, fullCap)  // restore original capacity
-    }
-}
-```
-
-This uses unsafe pointer manipulation to preserve the original capacity across slice operations.
-
-## Performance Optimizations
-
-### Channel Sizing
+### Channel sizing
 
 ```go
 func poolChannelSize(idx int) int {
-    return max(8, 256>>uint(idx))
+	return max(8, 256>>uint(idx))
 }
 ```
 
-Smaller buffers (used more frequently) get larger channels to reduce contention, while larger buffers get smaller channels to save memory.
+Smaller tiers (hotter paths) get larger channels; larger tiers get smaller channels to bound memory.
 
-### Put() operations
+### `Put`
+
+- **Unsized:** `Put` enqueues a weak handle; if the channel is full, the buffer is dropped.
+- **Sized:** `Put` routes by **capacity** to `smallPool`, a tier channel, or splits oversized caps in half until each part fits a tier.
+
+## Usage patterns
+
+### Unsized pool
+
+Use when buffer sizes vary (e.g. streaming `io.Reader` / `io.Writer`):
 
 ```go
-func (p UnsizedBytesPool) Put(b []byte) {
-    if b == nil {
-        return
-    }
-    put(b, p.pool)
+var reader io.Reader = // ...
+buf := unsizedPool.GetBuffer()
+defer unsizedPool.PutBuffer(buf)
+
+if _, err := io.Copy(buf, reader); err != nil {
+	return err
 }
 ```
 
-### Lock-free Operations
+### Sized pool
 
-All pool operations use channel selects instead of mutexes, enabling concurrent access without blocking.
-
-### Usage Patterns
-
-#### Unsized Pool
-
-Unsized Pool: Good for when buffer sizes vary unpredictably (e.g. io.Reader or io.Writer).
+Use when lengths are predictable (e.g. fixed read buffers):
 
 ```go
-var reader io.Reader = ...
-buf := unsizedBytesPool.GetBuffer() // returns a *bytes.Buffer
-defer unsizedBytesPool.PutBuffer(buf)
-
-_, err := io.Copy(buf, reader)
-if err != nil {
-    return err
-}
-```
-
-#### Sized Pool
-
-Sized Pool: Good for when buffer sizes are known and predictable (e.g. HTTP responses).
-
-```go
-var reader io.Reader = ...
-bytes := sizedBytesPool.GetSized(size) // returns a []byte
-defer sizedBytesPool.Put(bytes)
+var reader io.Reader = // ...
+bytes := sizedPool.GetSized(size)
+defer sizedPool.Put(bytes)
 
 _, err := io.ReadFull(reader, bytes)
 if err != nil {

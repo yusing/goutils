@@ -5,8 +5,6 @@ import (
 	"math/bits"
 	"unsafe"
 	"weak"
-
-	"github.com/puzpuzpuz/xsync/v4"
 )
 
 type UnsizedBytesPool struct {
@@ -47,7 +45,6 @@ func poolChannelSize(idx int) int {
 var (
 	unsizedBytesPool UnsizedBytesPool
 	sizedBytesPool   SizedBytesPool
-	sizedFullCaps    *xsync.Map[*byte, int]
 )
 
 var allocSizes [SizedPools]int
@@ -69,8 +66,6 @@ func init() {
 }
 
 func initAll() {
-	sizedFullCaps = xsync.NewMap[*byte, int]()
-
 	unsizedBytesPool.pool = make(chan weakBuf, UnsizedPoolSize)
 
 	for i := range allocSizes {
