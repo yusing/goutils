@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/rs/zerolog/log"
 	gperr "github.com/yusing/goutils/errs"
@@ -339,9 +340,14 @@ func (rm *ResponseModifier) FlushRelease() (int, error) {
 			// nothing to flush in passthrough mode, response was already streamed out.
 		} else if rm.bodyModified {
 			h := rm.w.Header()
-			h.Set("Content-Length", rm.ContentLengthStr())
-			h.Del("Transfer-Encoding")
-			h.Del("Trailer")
+			trailerKeys := preserveAnnouncedTrailers(h)
+			if len(trailerKeys) == 0 {
+				h.Set("Content-Length", rm.ContentLengthStr())
+				h.Del("Transfer-Encoding")
+			} else {
+				h.Del("Content-Length")
+				h.Del("Transfer-Encoding")
+			}
 			rm.w.WriteHeader(rm.StatusCode())
 
 			if content := rm.Content(); len(content) > 0 {
@@ -354,6 +360,7 @@ func (rm *ResponseModifier) FlushRelease() (int, error) {
 					rm.AppendError("flush error: %w", err)
 				}
 			}
+			copyTrailerValues(h, trailerKeys)
 		} else {
 			rm.w.WriteHeader(rm.StatusCode())
 		}
@@ -372,4 +379,36 @@ func (rm *ResponseModifier) FlushRelease() (int, error) {
 	}
 
 	return n, rm.errs.Error()
+}
+
+func preserveAnnouncedTrailers(header http.Header) []string {
+	trailer := header.Values("Trailer")
+	if len(trailer) == 0 {
+		return nil
+	}
+
+	var keys []string
+	for _, value := range trailer {
+		for key := range strings.SplitSeq(value, ",") {
+			key = strings.TrimSpace(key)
+			if key == "" {
+				continue
+			}
+			keys = append(keys, http.CanonicalHeaderKey(key))
+		}
+	}
+	return keys
+}
+
+func copyTrailerValues(header http.Header, trailerKeys []string) {
+	for _, key := range trailerKeys {
+		values := header.Values(key)
+		if len(values) == 0 {
+			continue
+		}
+		delete(header, key)
+		for _, value := range values {
+			header.Add(http.TrailerPrefix+key, value)
+		}
+	}
 }
