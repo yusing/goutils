@@ -136,6 +136,18 @@ func NewResponseModifier(w http.ResponseWriter) *ResponseModifier {
 	}
 }
 
+// NewPassthroughResponseModifier returns a response modifier that forwards writes
+// directly to the wrapped response writer. It is useful for request-only rule
+// processing where buffering would break streaming responses.
+func NewPassthroughResponseModifier(w http.ResponseWriter) *ResponseModifier {
+	return &ResponseModifier{
+		bufPool:           synk.GetUnsizedBytesPool(),
+		w:                 w,
+		origContentLength: -1,
+		passthrough:       true,
+	}
+}
+
 func (rm *ResponseModifier) BufPool() synk.UnsizedBytesPool {
 	return rm.bufPool
 }
@@ -163,6 +175,7 @@ func (rm *ResponseModifier) BodyBuffer() *bytes.Buffer {
 	return rm.buf
 }
 
+// ResponseModifier should not expose Unwrap, Flush or FlushError. The body must ensure to be buffered for modification.
 // func (rm *ResponseModifier) Unwrap() http.ResponseWriter {
 // 	return rm.w
 // }
@@ -274,7 +287,11 @@ func (rm *ResponseModifier) Write(b []byte) (int, error) {
 			rm.w.WriteHeader(rm.StatusCode())
 			rm.committed = true
 		}
-		return rm.w.Write(b)
+		n, err := rm.w.Write(b)
+		if err == nil {
+			rm.flush()
+		}
+		return n, err
 	}
 
 	if rm.statusCode == 0 {
@@ -312,9 +329,19 @@ func (rm *ResponseModifier) Write(b []byte) (int, error) {
 		rm.bufPool.PutBuffer(rm.buf)
 		rm.buf = nil
 		rm.passthrough = true
-		return rm.w.Write(b)
+		n, err := rm.w.Write(b)
+		if err == nil {
+			rm.flush()
+		}
+		return n, err
 	}
 	return rm.buf.Write(b)
+}
+
+func (rm *ResponseModifier) flush() {
+	if err := http.NewResponseController(rm.w).Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		rm.AppendError("flush error: %w", err)
+	}
 }
 
 // AppendError appends an error to the response modifier
@@ -337,7 +364,20 @@ func (rm *ResponseModifier) FlushRelease() (int, error) {
 	n := 0
 	if !rm.hijacked {
 		if rm.passthrough {
-			// nothing to flush in passthrough mode, response was already streamed out.
+			if rm.bodyModified {
+				if !rm.committed {
+					rm.w.WriteHeader(rm.StatusCode())
+					rm.committed = true
+				}
+				if content := rm.Content(); len(content) > 0 {
+					nn, werr := rm.w.Write(content)
+					n += nn
+					if werr != nil {
+						rm.AppendError("write error: %w", werr)
+					}
+					rm.flush()
+				}
+			}
 		} else if rm.bodyModified {
 			h := rm.w.Header()
 			trailerKeys := preserveAnnouncedTrailers(h)

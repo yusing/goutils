@@ -80,7 +80,7 @@ func (lrm *LazyResponseModifier) Write(b []byte) (int, error) {
 func (lrm *LazyResponseModifier) decide() {
 	lrm.decided = true
 	if lrm.shouldBuffer(lrm.w.Header()) {
-		lrm.rm = NewResponseModifier(lrm.w)
+		lrm.rm = GetInitResponseModifier(lrm.w)
 		lrm.rm.SetMaxBufferedBytes(lrm.maxBuffered)
 	}
 }
