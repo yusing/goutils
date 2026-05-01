@@ -676,12 +676,12 @@ func (p *ReverseProxy) handleUpgradeResponse(rw http.ResponseWriter, req *http.R
 	res.Body = nil // so res.Write only writes the headers; we have res.Body in backConn above
 	if err := res.Write(brw); err != nil {
 		//nolint:errorlint
-		p.errorHandler(rw, req, fmt.Errorf("response write: %s", err), true)
+		p.errorHandler(rw, req, fmt.Errorf("response write: %s", err), false)
 		return
 	}
 	if err := brw.Flush(); err != nil {
 		//nolint:errorlint
-		p.errorHandler(rw, req, fmt.Errorf("response flush: %s", err), true)
+		p.errorHandler(rw, req, fmt.Errorf("response flush: %s", err), false)
 		return
 	}
 
