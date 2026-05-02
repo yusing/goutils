@@ -283,6 +283,10 @@ var errClientDisconnected error
 
 func (p *ReverseProxy) errorHandler(rw http.ResponseWriter, r *http.Request, err error, writeHeader bool) {
 	reqURL := r.Host + r.URL.Path
+	if errors.Is(err, http.ErrHijacked) {
+		log.Trace().Err(err).Str("url", reqURL).Msg("http proxy error")
+		return
+	}
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, io.EOF):
 		log.Trace().Err(err).Str("url", reqURL).Msg("http proxy error")
