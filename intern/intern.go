@@ -2,8 +2,9 @@ package intern
 
 import (
 	"bytes"
-	"encoding/json"
 	"unique"
+
+	strutils "github.com/yusing/goutils/strings"
 )
 
 // Handle is wrapper around unique.Handle[string]
@@ -30,7 +31,7 @@ func (s Handle[T]) Value() T {
 }
 
 func (s Handle[T]) MarshalJSON() ([]byte, error) {
-	return json.Marshal(s.Value())
+	return strutils.MarshalJSON(s.Value())
 }
 
 func (s *Handle[T]) UnmarshalJSON(data []byte) error {
@@ -38,7 +39,7 @@ func (s *Handle[T]) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 	var v T
-	if err := json.Unmarshal(data, &v); err != nil {
+	if err := strutils.UnmarshalJSON(data, &v); err != nil {
 		return err
 	}
 	s.v = unique.Make(v)

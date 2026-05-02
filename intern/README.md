@@ -32,7 +32,7 @@ fmt.Println(h1 == h2)   // true - same memory
 // JSON serialization
 data, _ := json.Marshal(h1)
 var h3 intern.Handle[string]
-json.Unmarshal(data, &h3)
+strutils.UnmarshalJSON(data, &h3)
 ```
 
 ## Use Cases

@@ -1,11 +1,12 @@
 package gperr
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"slices"
+
+	strutils "github.com/yusing/goutils/strings"
 )
 
 func New(message string) Error {
@@ -20,7 +21,7 @@ type noUnwrap struct {
 }
 
 func (e noUnwrap) MarshalJSON() ([]byte, error) {
-	return json.Marshal(e.Error())
+	return strutils.MarshalJSON(e.Error())
 }
 
 func (e noUnwrap) Is(target error) bool {

@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	strutils "github.com/yusing/goutils/strings"
 )
 
 // baseError is an immutable wrapper around an error.
@@ -56,13 +58,13 @@ func (err baseError) MarshalJSON() ([]byte, error) {
 	//nolint:errorlint
 	switch err := err.Err.(type) {
 	case Error, *withSubject:
-		return json.Marshal(err)
+		return strutils.MarshalJSON(err)
 	case json.Marshaler:
 		return err.MarshalJSON()
 	case interface{ MarshalText() ([]byte, error) }:
 		return err.MarshalText()
 	default:
-		return json.Marshal(err.Error())
+		return strutils.MarshalJSON(err.Error())
 	}
 }
 

@@ -2,10 +2,10 @@ package gperr
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"slices"
 
+	strutils "github.com/yusing/goutils/strings"
 	"github.com/yusing/goutils/strings/ansi"
 )
 
@@ -142,5 +142,5 @@ func (err *withSubject) MarshalJSON() ([]byte, error) {
 		reversed.Subjects = append(reversed.Subjects, err.pendingSubject)
 	}
 
-	return json.Marshal(reversed)
+	return strutils.MarshalJSON(reversed)
 }

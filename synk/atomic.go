@@ -1,8 +1,9 @@
 package synk
 
 import (
-	"encoding/json"
 	"sync/atomic"
+
+	strutils "github.com/yusing/goutils/strings"
 )
 
 type Value[T any] struct {
@@ -39,8 +40,8 @@ func (a *Value[T]) Swap(v T) T {
 // If the value is nil, it will return the JSON encoding of the zero value of the type T.
 func (a *Value[T]) MarshalJSON() ([]byte, error) {
 	if v := a.Value.Load(); v != nil {
-		return json.Marshal(v)
+		return strutils.MarshalJSON(v)
 	}
 	var zero T
-	return json.Marshal(zero)
+	return strutils.MarshalJSON(zero)
 }

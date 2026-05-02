@@ -1,9 +1,10 @@
 package num
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
+
+	strutils "github.com/yusing/goutils/strings"
 )
 
 // Percentage holds a value in the range [0, 100] with a precision of 0.4% (+-0.2%).
@@ -70,7 +71,7 @@ func (p Percentage) MarshalJSON() ([]byte, error) {
 
 func (p *Percentage) UnmarshalJSON(data []byte) error {
 	var f float64
-	err := json.Unmarshal(data, &f)
+	err := strutils.UnmarshalJSON(data, &f)
 	if err != nil {
 		return err
 	}

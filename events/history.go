@@ -2,9 +2,10 @@ package events
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"sync"
+
+	strutils "github.com/yusing/goutils/strings"
 )
 
 const (
@@ -179,7 +180,7 @@ func (h *History) ListenJSON(ctx context.Context, w io.Writer) error {
 	current, ch, cancel := h.SnapshotAndListen()
 	defer cancel()
 
-	enc := json.NewEncoder(w)
+	enc := strutils.NewJSONEncoder(w)
 
 	for _, event := range current {
 		select {

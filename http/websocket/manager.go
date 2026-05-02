@@ -3,7 +3,6 @@ package websocket
 import (
 	"compress/flate"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -17,6 +16,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rs/zerolog/log"
 	"github.com/yusing/goutils/env"
+	strutils "github.com/yusing/goutils/strings"
 	"github.com/yusing/goutils/synk"
 )
 
@@ -213,18 +213,18 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 	}
 }
 
-// WriteJSON writes a JSON message to the connection with json.
+// WriteJSON writes a JSON message to the connection using the configured JSON marshaler (see goutils/strings serialization).
 // If the connection is closed, the error is returned.
 // If the write timeout is reached, ErrWriteTimeout is returned.
 func (cm *Manager) WriteJSON(data any, timeout time.Duration) error {
-	bytes, err := json.Marshal(data)
+	bytes, err := strutils.MarshalJSON(data)
 	if err != nil {
 		return err
 	}
 	return cm.WriteData(websocket.TextMessage, bytes, timeout)
 }
 
-// WriteData writes a message to the connection with sonic.
+// WriteData writes a raw WebSocket message (e.g. JSON bytes from MarshalJSON).
 // If the connection is closed, the error is returned.
 // If the write timeout is reached, ErrWriteTimeout is returned.
 func (cm *Manager) WriteData(typ int, data []byte, timeout time.Duration) error {
@@ -256,7 +256,7 @@ func (cm *Manager) ReadCh() <-chan []byte {
 	return cm.readCh
 }
 
-// ReadJSON reads a JSON message from the connection and unmarshals it into the provided struct with sonic
+// ReadJSON reads a JSON message from the connection and unmarshals it with the configured JSON unmarshaler (see goutils/strings serialization).
 // If the connection is closed, the error is returned.
 // If the message fails to unmarshal, the error is returned.
 // If the read timeout is reached, ErrReadTimeout is returned.
@@ -265,7 +265,7 @@ func (cm *Manager) ReadJSON(out any, timeout time.Duration) error {
 	case <-cm.ctx.Done():
 		return cm.err.Load()
 	case data := <-cm.readCh:
-		return json.Unmarshal(data, out)
+		return strutils.UnmarshalJSON(data, out)
 	case <-time.After(timeout):
 		return ErrReadTimeout
 	}
