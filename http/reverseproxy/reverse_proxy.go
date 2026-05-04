@@ -281,6 +281,9 @@ var errStreamClosed error
 //go:linkname errClientDisconnected golang.org/x/net/http2.errClientDisconnected
 var errClientDisconnected error
 
+//go:linkname errClosedResponseBody golang.org/x/net/http2.errClosedResponseBody
+var errClosedResponseBody error
+
 func (p *ReverseProxy) errorHandler(rw http.ResponseWriter, r *http.Request, err error, writeHeader bool) {
 	reqURL := r.Host + r.URL.Path
 	if errors.Is(err, http.ErrHijacked) {
@@ -302,14 +305,14 @@ func (p *ReverseProxy) errorHandler(rw http.ResponseWriter, r *http.Request, err
 			log.Err(err).Msg("underlying error")
 			goto logged
 		}
-		if errors.Is(err, errStreamClosed) || errors.Is(err, errClientDisconnected) {
+		if errors.Is(err, errStreamClosed) || errors.Is(err, errClientDisconnected) || errors.Is(err, errClosedResponseBody) {
 			goto logged
 		}
 		var h2Err http2.StreamError
 		if errors.As(err, &h2Err) {
 			// ignore these errors
 			switch h2Err.Code {
-			case http2.ErrCodeStreamClosed:
+			case http2.ErrCodeStreamClosed, http2.ErrCodeCancel:
 				goto logged
 			}
 		}
