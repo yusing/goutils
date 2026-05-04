@@ -586,6 +586,10 @@ retry:
 	}
 
 	rw.WriteHeader(res.StatusCode)
+	if err := flushResponseHeadersForStreaming(rw, res.StatusCode); err != nil {
+		p.errorHandler(rw, req, err, false)
+		return
+	}
 
 	err = ioutils.CopyCloseWithContext(ctx, rw, res.Body, int(res.ContentLength)) // close now, instead of defer, to populate res.Trailer
 	if err != nil {
@@ -613,6 +617,16 @@ retry:
 			rw.Header().Add(k, v)
 		}
 	}
+}
+
+func flushResponseHeadersForStreaming(rw http.ResponseWriter, statusCode int) error {
+	if statusCode < http.StatusOK || !httpheaders.IsGrpcOrSSE(rw.Header()) {
+		return nil
+	}
+	if err := http.NewResponseController(rw).Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	return nil
 }
 
 // reference: https://github.com/traefik/traefik/blob/master/pkg/proxy/httputil/proxy.go

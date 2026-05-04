@@ -1,10 +1,12 @@
 package httpheaders
 
 import (
+	"mime"
 	"net/http"
 	"net/textproto"
 	"strings"
 
+	strutils "github.com/yusing/goutils/strings"
 	"golang.org/x/net/http/httpguts"
 )
 
@@ -114,4 +116,17 @@ func HeaderToMap(h http.Header) map[string]string {
 		}
 	}
 	return result
+}
+
+func IsGrpcOrSSE(h http.Header) bool {
+	contentType := h.Get("Content-Type")
+	if contentType != "" {
+		mediaType, _, err := mime.ParseMediaType(contentType)
+		if err == nil {
+			if strings.EqualFold(mediaType, "text/event-stream") || strutils.HasPrefixFold(mediaType, "application/grpc") {
+				return true
+			}
+		}
+	}
+	return false
 }

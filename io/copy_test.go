@@ -99,3 +99,45 @@ func TestCopyClose_FlushesGRPCResponses(t *testing.T) {
 		})
 	}
 }
+
+type unsupportedFlushResponseWriter struct {
+	flushCountingResponseWriter
+}
+
+func (w *unsupportedFlushResponseWriter) FlushError() error {
+	w.flushCount++
+	return http.ErrNotSupported
+}
+
+func (w *unsupportedFlushResponseWriter) Write(p []byte) (int, error) {
+	w.writes++
+	return len(p), nil
+}
+
+func TestCopyClose_IgnoresUnsupportedFlush(t *testing.T) {
+	dst := &unsupportedFlushResponseWriter{}
+	dst.Header().Set("Content-Type", "text/html")
+
+	src := strings.NewReader("buffered body")
+
+	err := CopyClose(dst, src, -1)
+	require.NoError(t, err)
+	require.Positive(t, dst.writes)
+	require.Equal(t, dst.writes, dst.flushCount)
+}
+
+func TestCopyClose_IgnoresUnsupportedFlushForGRPCAndSSE(t *testing.T) {
+	for _, contentType := range []string{"application/grpc", "application/grpc+proto", "text/event-stream"} {
+		t.Run(contentType, func(t *testing.T) {
+			dst := &unsupportedFlushResponseWriter{}
+			dst.Header().Set("Content-Type", contentType)
+
+			src := strings.NewReader("buffered body")
+
+			err := CopyClose(dst, src, -1)
+			require.NoError(t, err)
+			require.Positive(t, dst.writes)
+			require.Equal(t, dst.writes, dst.flushCount)
+		})
+	}
+}

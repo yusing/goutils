@@ -1,6 +1,7 @@
 package reverseproxy
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -274,5 +275,59 @@ func TestReverseProxy_GRPCResponseWithoutFlushSupport(t *testing.T) {
 	}
 	if gotStatus := res.Trailer.Get("Grpc-Status"); gotStatus != "0" {
 		t.Fatalf("grpc-status trailer = %q, want 0", gotStatus)
+	}
+}
+
+type flushErrorResponseWriter struct {
+	http.ResponseWriter
+	err error
+}
+
+func (w flushErrorResponseWriter) FlushError() error {
+	return w.err
+}
+
+func TestReverseProxy_GRPCResponseIgnoresUnsupportedHeaderFlush(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/grpc")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte{0, 0, 0, 0, 0})
+	}))
+	defer srv.Close()
+
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse target url: %v", err)
+	}
+
+	rp := NewReverseProxy("test-grpc-unsupported-flush", target, &http.Transport{})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://proxy.local/pkg.Service/Unary", strings.NewReader("grpc-body"))
+	req.Header.Set("Content-Type", "application/grpc")
+
+	rp.ServeHTTP(flushErrorResponseWriter{ResponseWriter: rec, err: http.ErrNotSupported}, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("proxy status = %d, want %d", res.StatusCode, http.StatusOK)
+	}
+	if len(body) != 5 {
+		t.Fatalf("response body length = %d, want 5", len(body))
+	}
+}
+
+func TestFlushResponseHeadersForStreamingPropagatesFlushError(t *testing.T) {
+	wantErr := errors.New("flush failed")
+	rw := flushErrorResponseWriter{ResponseWriter: httptest.NewRecorder(), err: wantErr}
+	rw.Header().Set("Content-Type", "application/grpc")
+
+	err := flushResponseHeadersForStreaming(rw, http.StatusOK)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("flush error = %v, want %v", err, wantErr)
 	}
 }

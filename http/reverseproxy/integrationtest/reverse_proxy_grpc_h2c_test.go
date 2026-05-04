@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	reverseproxy "github.com/yusing/goutils/http/reverseproxy"
 	"golang.org/x/net/http2"
@@ -96,6 +97,31 @@ func TestReverseProxyH2CGRPCBidiStreamIntegration(t *testing.T) {
 	}
 }
 
+func TestReverseProxyH2CGRPCHeaderOnlyBidiStreamIntegration(t *testing.T) {
+	conn := startGRPCOverH2CProxy(t)
+	defer conn.Close()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+
+	stream, err := conn.NewStream(ctx, &grpc.StreamDesc{
+		ServerStreams: true,
+		ClientStreams: true,
+	}, "/test.Echo/HeaderOnly")
+	if err != nil {
+		t.Fatalf("new stream: %v", err)
+	}
+	defer stream.CloseSend()
+
+	header, err := stream.Header()
+	if err != nil {
+		t.Fatalf("stream header: %v", err)
+	}
+	if got := header.Get("x-stream-header"); len(got) != 1 || got[0] != "ready" {
+		t.Fatalf("stream header x-stream-header = %v, want [ready]", got)
+	}
+}
+
 func startGRPCOverH2CProxy(t *testing.T) *grpc.ClientConn {
 	t.Helper()
 
@@ -112,6 +138,12 @@ func startGRPCOverH2CProxy(t *testing.T) *grpc.ClientConn {
 			{
 				StreamName:    "Chat",
 				Handler:       testGRPCChatHandler,
+				ServerStreams: true,
+				ClientStreams: true,
+			},
+			{
+				StreamName:    "HeaderOnly",
+				Handler:       testGRPCHeaderOnlyHandler,
 				ServerStreams: true,
 				ClientStreams: true,
 			},
@@ -203,4 +235,12 @@ func testGRPCChatHandler(_ any, stream grpc.ServerStream) error {
 			return err
 		}
 	}
+}
+
+func testGRPCHeaderOnlyHandler(_ any, stream grpc.ServerStream) error {
+	if err := stream.SendHeader(metadata.Pairs("x-stream-header", "ready")); err != nil {
+		return err
+	}
+	<-stream.Context().Done()
+	return nil
 }

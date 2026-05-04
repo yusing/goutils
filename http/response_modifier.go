@@ -175,10 +175,26 @@ func (rm *ResponseModifier) BodyBuffer() *bytes.Buffer {
 	return rm.buf
 }
 
-// ResponseModifier should not expose Unwrap, Flush or FlushError. The body must ensure to be buffered for modification.
-// func (rm *ResponseModifier) Unwrap() http.ResponseWriter {
-// 	return rm.w
-// }
+// ResponseModifier should not expose Unwrap because buffered mode must not expose
+// methods such as Flush that would bypass response modification. Passthrough mode
+// intentionally forwards FlushError for streaming responses routed through rules.
+func (rm *ResponseModifier) FlushError() error {
+	if !rm.passthrough {
+		return http.ErrNotSupported
+	}
+	if !rm.committed {
+		rm.w.WriteHeader(rm.StatusCode())
+		rm.committed = true
+	}
+	if err := http.NewResponseController(rm.w).Flush(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (rm *ResponseModifier) Flush() {
+	_ = rm.FlushError()
+}
 
 func (rm *ResponseModifier) WriteHeader(code int) {
 	rm.statusCode = code

@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"io"
-	"mime"
 	"net/http"
 	"strings"
 
-	strutils "github.com/yusing/goutils/strings"
+	"github.com/yusing/goutils/http/httpheaders"
 	"github.com/yusing/goutils/synk"
 )
 
@@ -90,9 +89,8 @@ func copyClose(ctx context.Context, dst io.Writer, src io.Reader, sizeHint int) 
 				return
 			}
 			if shouldFlush {
-				err = flusher.FlushError()
-				if err != nil {
-					return err
+				if flushErr := flusher.FlushError(); flushErr != nil && !isErrUnsupportedFlush(flushErr) {
+					return flushErr
 				}
 			}
 		}
@@ -144,14 +142,8 @@ func getHTTPFlusher(dst io.Writer) (flusher flushErrorInterface, shouldFlush boo
 func shouldFlushHTTPWriter(rw http.ResponseWriter) bool {
 	header := rw.Header()
 
-	contentType := header.Get("Content-Type")
-	if contentType != "" {
-		mediaType, _, err := mime.ParseMediaType(contentType)
-		if err == nil {
-			if strings.EqualFold(mediaType, "text/event-stream") || strutils.HasPrefixFold(mediaType, "application/grpc") {
-				return true
-			}
-		}
+	if httpheaders.IsGrpcOrSSE(header) {
+		return true
 	}
 
 	if header.Get("Content-Length") != "" {
@@ -167,4 +159,8 @@ func shouldFlushHTTPWriter(rw http.ResponseWriter) bool {
 	}
 
 	return header.Get("Content-Length") == ""
+}
+
+func isErrUnsupportedFlush(err error) bool {
+	return errors.Is(err, http.ErrNotSupported) || errors.Is(err, errors.ErrUnsupported)
 }
