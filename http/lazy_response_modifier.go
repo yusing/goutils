@@ -13,7 +13,9 @@ import (
 // through directly to avoid memory overhead.
 type LazyResponseModifier struct {
 	w            http.ResponseWriter
+	r            *http.Request
 	shouldBuffer func(http.Header) bool
+	modifier     ModifyResponseFunc
 	maxBuffered  int
 
 	decided bool
@@ -23,6 +25,7 @@ type LazyResponseModifier struct {
 
 	// Used in passthrough mode
 	statusCode int
+	headerSent bool
 }
 
 // NewLazyResponseModifier creates a new LazyResponseModifier.
@@ -44,6 +47,13 @@ func (lrm *LazyResponseModifier) SetMaxBufferedBytes(max int) {
 	lrm.maxBuffered = max
 }
 
+// SetModifyResponse sets a response modifier that runs before the buffering
+// decision and before response headers are written.
+func (lrm *LazyResponseModifier) SetModifyResponse(r *http.Request, f ModifyResponseFunc) {
+	lrm.r = r
+	lrm.modifier = f
+}
+
 func (lrm *LazyResponseModifier) Header() http.Header {
 	if lrm.rm != nil {
 		return lrm.rm.Header()
@@ -53,32 +63,54 @@ func (lrm *LazyResponseModifier) Header() http.Header {
 
 func (lrm *LazyResponseModifier) WriteHeader(code int) {
 	if !lrm.decided {
-		lrm.decide()
+		lrm.decide(code)
 	}
 
 	if lrm.rm != nil {
-		lrm.rm.WriteHeader(code)
+		lrm.rm.WriteHeader(lrm.statusCode)
 	} else {
-		lrm.statusCode = code
-		lrm.w.WriteHeader(code)
+		if !lrm.headerSent {
+			lrm.w.WriteHeader(lrm.statusCode)
+			lrm.headerSent = true
+		}
 	}
 }
 
 func (lrm *LazyResponseModifier) Write(b []byte) (int, error) {
 	if !lrm.decided {
-		lrm.decide()
+		lrm.decide(http.StatusOK)
 	}
 
 	if lrm.rm != nil {
 		return lrm.rm.Write(b)
+	}
+	if !lrm.headerSent {
+		lrm.w.WriteHeader(lrm.statusCode)
+		lrm.headerSent = true
 	}
 	return lrm.w.Write(b)
 }
 
 // decide determines whether to buffer based on content-type header.
 // Must be called before first write.
-func (lrm *LazyResponseModifier) decide() {
+func (lrm *LazyResponseModifier) decide(code int) {
 	lrm.decided = true
+	lrm.statusCode = code
+	if lrm.modifier != nil {
+		resp := &http.Response{
+			StatusCode:    code,
+			Header:        lrm.w.Header(),
+			Request:       lrm.r,
+			ContentLength: -1,
+		}
+		if contentLength := resp.Header.Get("Content-Length"); contentLength != "" {
+			_, _ = fmt.Sscan(contentLength, &resp.ContentLength)
+		}
+		if err := lrm.modifier(resp); err != nil {
+			resp.StatusCode = http.StatusInternalServerError
+		}
+		lrm.statusCode = resp.StatusCode
+	}
 	if lrm.shouldBuffer(lrm.w.Header()) {
 		lrm.rm = GetInitResponseModifier(lrm.w)
 		lrm.rm.SetMaxBufferedBytes(lrm.maxBuffered)
