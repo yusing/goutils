@@ -1,6 +1,6 @@
 module github.com/yusing/goutils/http/reverseproxy/integrationtest
 
-go 1.26.3
+go 1.26.4
 
 replace github.com/yusing/goutils/http/reverseproxy => ..
 
@@ -8,7 +8,7 @@ replace github.com/yusing/goutils => ../../..
 
 require (
 	github.com/yusing/goutils/http/reverseproxy v0.0.0
-	golang.org/x/net v0.55.0
+	golang.org/x/net v0.56.0
 	google.golang.org/grpc v1.80.0
 )
 
@@ -19,9 +19,9 @@ require (
 	github.com/quic-go/quic-go v0.60.0 // indirect
 	github.com/rs/zerolog v1.35.1 // indirect
 	github.com/yusing/goutils v0.7.0 // indirect
-	golang.org/x/crypto v0.52.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260120221211-b8f7ae30c516 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
