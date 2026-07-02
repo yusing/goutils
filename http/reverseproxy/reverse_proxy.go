@@ -24,16 +24,14 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/quic-go/quic-go/http3"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	httputils "github.com/yusing/goutils/http"
 	"github.com/yusing/goutils/http/accesslog"
 	"github.com/yusing/goutils/http/httpheaders"
 	ioutils "github.com/yusing/goutils/io"
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/http2"
-
-	_ "unsafe"
 )
 
 // A ProxyRequest contains a request to be rewritten by a [ReverseProxy].
@@ -275,15 +273,6 @@ func copyHeader(dst, src http.Header) {
 	}
 }
 
-//go:linkname errStreamClosed golang.org/x/net/http2.errStreamClosed
-var errStreamClosed error
-
-//go:linkname errClientDisconnected golang.org/x/net/http2.errClientDisconnected
-var errClientDisconnected error
-
-//go:linkname errClosedResponseBody golang.org/x/net/http2.errClosedResponseBody
-var errClosedResponseBody error
-
 func (p *ReverseProxy) errorHandler(rw http.ResponseWriter, r *http.Request, err error, writeHeader bool) {
 	reqURL := r.Host + r.URL.Path
 	if errors.Is(err, http.ErrHijacked) {
@@ -296,40 +285,17 @@ func (p *ReverseProxy) errorHandler(rw http.ResponseWriter, r *http.Request, err
 	case errors.Is(err, context.DeadlineExceeded):
 		log.Debug().Err(err).Str("url", reqURL).Msg("http proxy error")
 	default:
-		var recordErr tls.RecordHeaderError
-		if errors.As(err, &recordErr) {
+		if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
 			log.Error().
 				Str("url", reqURL).
 				Msgf(`scheme was likely misconfigured as https,
 						try setting "proxy.%s.scheme" back to "http"`, p.TargetName)
 			log.Err(err).Msg("underlying error")
-			goto logged
+		} else if httputils.IsUnexpectedError(err) {
+			log.Err(err).Str("url", reqURL).Msg("http proxy error")
 		}
-		if errors.Is(err, errStreamClosed) || errors.Is(err, errClientDisconnected) || errors.Is(err, errClosedResponseBody) {
-			goto logged
-		}
-		var h2Err http2.StreamError
-		if errors.As(err, &h2Err) {
-			// ignore these errors
-			switch h2Err.Code {
-			case http2.ErrCodeStreamClosed, http2.ErrCodeCancel:
-				goto logged
-			}
-		}
-		var h3Err *http3.Error
-		if errors.As(err, &h3Err) {
-			// ignore these errors
-			switch h3Err.ErrorCode {
-			case
-				http3.ErrCodeNoError,
-				http3.ErrCodeRequestCanceled:
-				goto logged
-			}
-		}
-		log.Err(err).Str("url", reqURL).Msg("http proxy error")
 	}
 
-logged:
 	if writeHeader {
 		rw.WriteHeader(http.StatusInternalServerError)
 	}

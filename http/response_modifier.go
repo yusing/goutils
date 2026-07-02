@@ -355,7 +355,7 @@ func (rm *ResponseModifier) Write(b []byte) (int, error) {
 }
 
 func (rm *ResponseModifier) flush() {
-	if err := http.NewResponseController(rm.w).Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+	if err := http.NewResponseController(rm.w).Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) && IsUnexpectedError(err) {
 		rm.AppendError("flush error: %w", err)
 	}
 }
@@ -412,9 +412,7 @@ func (rm *ResponseModifier) FlushRelease() (int, error) {
 				if werr != nil {
 					rm.AppendError("write error: %w", werr)
 				}
-				if err := http.NewResponseController(rm.w).Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
-					rm.AppendError("flush error: %w", err)
-				}
+				rm.flush()
 			}
 			copyTrailerValues(h, trailerKeys)
 		} else {
