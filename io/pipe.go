@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"sync"
 	"syscall"
 )
@@ -28,12 +29,15 @@ func NewPipe(ctx context.Context, r io.ReadCloser, w io.WriteCloser) Pipe {
 }
 
 func (p Pipe) Start() (err error) {
-	err = CopyClose(&p.w, &p.r, 0)
+	err = CopyCloseWithContext(p.r.ctx, &p.w, &p.r, 0)
 	switch {
 	case
 		// NOTE: ignoring broken pipe and connection reset by peer
 		errors.Is(err, syscall.EPIPE),
-		errors.Is(err, syscall.ECONNRESET):
+		errors.Is(err, syscall.ECONNRESET),
+		errors.Is(err, io.ErrClosedPipe),
+		errors.Is(err, net.ErrClosed),
+		errors.Is(err, context.Canceled):
 		return nil
 	}
 	return err

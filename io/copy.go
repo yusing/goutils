@@ -65,7 +65,8 @@ func copyClose(ctx context.Context, dst io.Writer, src io.Reader, sizeHint int) 
 					wCloser.Close()
 				}
 			}
-			context.AfterFunc(ctx, close)
+			stop := context.AfterFunc(ctx, close)
+			defer stop()
 		}
 	}
 

@@ -34,6 +34,13 @@ func (r *ContextReader) Read(p []byte) (int, error) {
 	}
 }
 
+func (r *ContextReader) Close() error {
+	if closer, ok := r.Reader.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 func (w *ContextWriter) Write(p []byte) (int, error) {
 	select {
 	case <-w.ctx.Done():
@@ -41,4 +48,11 @@ func (w *ContextWriter) Write(p []byte) (int, error) {
 	default:
 		return w.Writer.Write(p)
 	}
+}
+
+func (w *ContextWriter) Close() error {
+	if closer, ok := w.Writer.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
