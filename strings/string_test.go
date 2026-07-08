@@ -24,6 +24,7 @@ func TestIndexFold(t *testing.T) {
 		{name: "unicode", s: "Straße", substr: "ße", wantIndex: 4, wantContains: true, wantSuffix: true},
 		{name: "unicode_folded", s: "Äpfel", substr: "ä", wantIndex: 0, wantContains: true, wantPrefix: true},
 		{name: "unicode_lowercase_byte_length_change", s: "k", substr: "\u212a", wantIndex: 0, wantContains: true},
+		{name: "unicode_lowercase_byte_length_change_before_match", s: "\u212aX", substr: "x", wantIndex: len("\u212a"), wantContains: true, wantSuffix: true},
 		{name: "prefix_folded", s: "Application/Grpc", substr: "application", wantIndex: 0, wantContains: true, wantPrefix: true},
 		{name: "suffix_folded", s: "Application/Grpc", substr: "grpc", wantIndex: 12, wantContains: true, wantSuffix: true},
 	}
@@ -48,6 +49,7 @@ func BenchmarkIndexFold(b *testing.B) {
 		{name: "exact_long", s: "text/event-stream; charset=utf-8", substr: "event-stream"},
 		{name: "missing", s: "text/event-stream; charset=utf-8", substr: "application/grpc"},
 		{name: "long_ascii_late", s: strings.Repeat("a", 256) + "grpc", substr: "grpc"},
+		{name: "long_mixed_ascii_late", s: strings.Repeat("aA", 128) + "Grpc", substr: "grpc"},
 		{name: "long_repeated_prefix_miss", s: strings.Repeat("a", 256), substr: "aaaaab"},
 		{name: "non_ascii_early_match", s: "\u00e9grpc", substr: "grpc"},
 	}

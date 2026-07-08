@@ -8,8 +8,6 @@ import (
 	"golang.org/x/text/language"
 )
 
-const indexFoldASCIIMaxLen = 64
-
 func Title(s string) string {
 	return cases.Title(language.AmericanEnglish).String(s)
 }
@@ -22,13 +20,13 @@ func IndexFold(s, substr string) int {
 	if len(substr) == 0 {
 		return 0
 	}
-	if len(s) <= indexFoldASCIIMaxLen && isASCII(s) && isASCII(substr) {
+	if isASCII(s) && isASCII(substr) {
 		if len(substr) > len(s) {
 			return -1
 		}
 		return indexFoldASCII(s, substr)
 	}
-	return strings.Index(strings.ToLower(s), strings.ToLower(substr))
+	return indexFoldUnicode(s, substr)
 }
 
 func HasPrefixFold(s, prefix string) bool {
@@ -86,6 +84,29 @@ func isASCII(s string) bool {
 		}
 	}
 	return true
+}
+
+func indexFoldUnicode(s, substr string) int {
+	lowerS, index := lowerWithByteIndex(s)
+	i := strings.Index(lowerS, strings.ToLower(substr))
+	if i < 0 {
+		return -1
+	}
+	return index[i]
+}
+
+func lowerWithByteIndex(s string) (string, []int) {
+	var b strings.Builder
+	b.Grow(len(s))
+	index := make([]int, 0, len(s))
+	for i, r := range s {
+		lower := strings.ToLower(string(r))
+		b.WriteString(lower)
+		for range len(lower) {
+			index = append(index, i)
+		}
+	}
+	return b.String(), index
 }
 
 //nolint:intrange

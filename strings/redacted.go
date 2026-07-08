@@ -54,7 +54,7 @@ func Redact(s string) string {
 	if n <= 4 {
 		return s[:1] + "**" + s[n-1:]
 	}
-	if n-4 < numAsterisks {
+	if n-4 <= numAsterisks {
 		return s[:2] + asterisks[:n-4] + s[n-2:]
 	}
 	return redactLong(s, n)

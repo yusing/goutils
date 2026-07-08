@@ -22,6 +22,9 @@ func DeepEqual(x, y any) bool {
 		sy, ok := y.(string)
 		return ok && sx == sy
 	}
+	if equal, ok := scalarEqual(x, y); ok {
+		return equal
+	}
 
 	v1 := reflect.ValueOf(x)
 	v2 := reflect.ValueOf(y)
@@ -137,11 +140,17 @@ func deepEqual(v1, v2 reflect.Value, visited map[visit]bool, depth int) bool {
 	case reflect.Array:
 		return deepEqualArray(v1, v2, visited, depth)
 	case reflect.Slice:
+		if sliceIdentityEqual(v1, v2) {
+			return true
+		}
 		if markVisited(v1, v2, visited) {
 			return true
 		}
 		return deepEqualSlice(v1, v2, visited, depth)
 	case reflect.Map:
+		if mapIdentityEqual(v1, v2) {
+			return true
+		}
 		if markVisited(v1, v2, visited) {
 			return true
 		}
@@ -153,6 +162,9 @@ func deepEqual(v1, v2 reflect.Value, visited map[visit]bool, depth int) bool {
 			return false
 		}
 		if v1.IsNil() {
+			return true
+		}
+		if v1.Pointer() == v2.Pointer() {
 			return true
 		}
 		if markVisited(v1, v2, visited) {
@@ -178,6 +190,88 @@ func deepEqual(v1, v2 reflect.Value, visited map[visit]bool, depth int) bool {
 		}
 		return v1.Interface() == v2.Interface()
 	}
+}
+
+func scalarEqual(x, y any) (bool, bool) {
+	switch xv := x.(type) {
+	case bool:
+		yv, ok := y.(bool)
+		return ok && xv == yv, ok
+	case int:
+		yv, ok := y.(int)
+		return ok && xv == yv, ok
+	case int8:
+		yv, ok := y.(int8)
+		return ok && xv == yv, ok
+	case int16:
+		yv, ok := y.(int16)
+		return ok && xv == yv, ok
+	case int32:
+		yv, ok := y.(int32)
+		return ok && xv == yv, ok
+	case int64:
+		yv, ok := y.(int64)
+		return ok && xv == yv, ok
+	case uint:
+		yv, ok := y.(uint)
+		return ok && xv == yv, ok
+	case uint8:
+		yv, ok := y.(uint8)
+		return ok && xv == yv, ok
+	case uint16:
+		yv, ok := y.(uint16)
+		return ok && xv == yv, ok
+	case uint32:
+		yv, ok := y.(uint32)
+		return ok && xv == yv, ok
+	case uint64:
+		yv, ok := y.(uint64)
+		return ok && xv == yv, ok
+	case uintptr:
+		yv, ok := y.(uintptr)
+		return ok && xv == yv, ok
+	case float32:
+		yv, ok := y.(float32)
+		return ok && floatEqual(float64(xv), float64(yv)), ok
+	case float64:
+		yv, ok := y.(float64)
+		return ok && floatEqual(xv, yv), ok
+	case complex64:
+		yv, ok := y.(complex64)
+		if !ok {
+			return false, false
+		}
+		return floatEqual(float64(real(xv)), float64(real(yv))) &&
+			floatEqual(float64(imag(xv)), float64(imag(yv))), true
+	case complex128:
+		yv, ok := y.(complex128)
+		if !ok {
+			return false, false
+		}
+		return floatEqual(real(xv), real(yv)) && floatEqual(imag(xv), imag(yv)), true
+	default:
+		return false, false
+	}
+}
+
+func sliceIdentityEqual(v1, v2 reflect.Value) bool {
+	if v1.IsNil() != v2.IsNil() || v1.Len() != v2.Len() {
+		return false
+	}
+	if v1.IsNil() || v1.Len() == 0 {
+		return true
+	}
+	return v1.Pointer() == v2.Pointer()
+}
+
+func mapIdentityEqual(v1, v2 reflect.Value) bool {
+	if v1.IsNil() != v2.IsNil() || v1.Len() != v2.Len() {
+		return false
+	}
+	if v1.IsNil() {
+		return true
+	}
+	return v1.Pointer() == v2.Pointer()
 }
 
 // floatEqual handles NaN cases properly

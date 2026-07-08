@@ -104,10 +104,16 @@ func BenchmarkJoinCookieValues(b *testing.B) {
 			name:      "semicolon-empty",
 			newCookie: "alpha; ;",
 		},
+		{
+			name:      "append-split-spare-capacity",
+			existing:  append(make([]string, 0, 4), "alpha"),
+			newCookie: "beta; gamma",
+		},
 	}
 
 	for _, bm := range benchmarks {
 		b.Run(bm.name, func(b *testing.B) {
+			b.ReportAllocs()
 			for b.Loop() {
 				_ = joinCookieValues(bm.existing, bm.newCookie)
 			}

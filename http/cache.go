@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -91,8 +92,7 @@ func joinCookieValues(cookies []string, newCookie string) []string {
 	if nNew == 0 {
 		return append(cookies, newCookie)
 	}
-	values := make([]string, 0, len(cookies)+nNew+1)
-	values = append(values, cookies...)
+	values := slices.Grow(cookies, nNew+1)
 	for value := range strings.SplitSeq(newCookie, ";") {
 		values = append(values, strings.TrimSpace(value))
 	}

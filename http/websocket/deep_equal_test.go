@@ -19,6 +19,9 @@ var (
 	deepEqualBenchIntB        = 42
 	deepEqualBenchStructA     = deepEqualBenchPayload{Name: "alpha", Active: true, Count: 42, Values: []int{1, 2, 3}}
 	deepEqualBenchStructB     = deepEqualBenchPayload{Name: "alpha", Active: true, Count: 42, Values: []int{1, 2, 3}}
+	deepEqualBenchSlice       = []int{1, 2, 3}
+	deepEqualBenchMap         = map[string]int{"alpha": 1, "beta": 2}
+	deepEqualBenchPointer     = &deepEqualBenchPayload{Name: "alpha", Active: true, Count: 42, Values: []int{1, 2, 3}}
 )
 
 func TestDeepEqualScalars(t *testing.T) {
@@ -81,5 +84,23 @@ func BenchmarkDeepEqualIntEqual(b *testing.B) {
 func BenchmarkDeepEqualStructEqual(b *testing.B) {
 	for b.Loop() {
 		_ = DeepEqual(deepEqualBenchStructA, deepEqualBenchStructB)
+	}
+}
+
+func BenchmarkDeepEqualSameSlice(b *testing.B) {
+	for b.Loop() {
+		_ = DeepEqual(deepEqualBenchSlice, deepEqualBenchSlice)
+	}
+}
+
+func BenchmarkDeepEqualSameMap(b *testing.B) {
+	for b.Loop() {
+		_ = DeepEqual(deepEqualBenchMap, deepEqualBenchMap)
+	}
+}
+
+func BenchmarkDeepEqualSamePointer(b *testing.B) {
+	for b.Loop() {
+		_ = DeepEqual(deepEqualBenchPointer, deepEqualBenchPointer)
 	}
 }
