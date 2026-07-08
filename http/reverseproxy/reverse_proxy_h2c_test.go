@@ -101,6 +101,68 @@ func TestReverseProxy_H2C_Scheme(t *testing.T) {
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func TestReverseProxySchemeRetryDoesNotMutateTargetURL(t *testing.T) {
+	target, err := url.Parse("http://backend.local/base")
+	if err != nil {
+		t.Fatalf("parse target url: %v", err)
+	}
+
+	var gotURLs []string
+	transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotURLs = append(gotURLs, req.URL.String())
+		if len(gotURLs) == 1 {
+			return nil, http.ErrSchemeMismatch
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader("ok")),
+			Request:    req,
+		}, nil
+	})
+
+	rp := NewReverseProxy("test-scheme-retry", target, transport)
+	rp.OnSchemeMisMatch = func(currentScheme string) (string, bool) {
+		if currentScheme != "http" {
+			t.Fatalf("retry current scheme = %q, want http", currentScheme)
+		}
+		return "https", true
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://proxy.local/hello?x=1", nil)
+	rec := httptest.NewRecorder()
+	rp.ServeHTTP(rec, req)
+
+	res := rec.Result()
+	defer res.Body.Close()
+	_, _ = io.ReadAll(res.Body)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("proxy status = %d, want %d", res.StatusCode, http.StatusOK)
+	}
+	if target.Scheme != "http" {
+		t.Fatalf("target scheme = %q, want http", target.Scheme)
+	}
+	wantURLs := []string{
+		"http://backend.local/base/hello?x=1",
+		"https://backend.local/base/hello?x=1",
+	}
+	if len(gotURLs) != len(wantURLs) {
+		t.Fatalf("round trips = %d, want %d (%v)", len(gotURLs), len(wantURLs), gotURLs)
+	}
+	for i, want := range wantURLs {
+		if gotURLs[i] != want {
+			t.Fatalf("round trip %d url = %q, want %q", i, gotURLs[i], want)
+		}
+	}
+}
+
 func TestH2CRoundTripper_AcceptsH2CSchemeAndRemovesUpgradeHeaders(t *testing.T) {
 	got := make(chan http.Header, 1)
 

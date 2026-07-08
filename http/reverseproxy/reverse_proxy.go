@@ -93,7 +93,7 @@ type ReverseProxy struct {
 
 	HandlerFunc http.HandlerFunc
 
-	OnSchemeMisMatch func() (retry bool)
+	OnSchemeMisMatch func(currentScheme string) (retryScheme string, retry bool)
 
 	TargetName string
 	TargetURL  *url.URL
@@ -159,12 +159,12 @@ func NewReverseProxy(name string, target *url.URL, transport http.RoundTripper) 
 	return rp
 }
 
-func (p *ReverseProxy) rewriteRequestURL(req *http.Request) {
+func (p *ReverseProxy) rewriteRequestURL(req *http.Request, scheme string) {
 	targetQuery := p.TargetURL.RawQuery
-	if p.useH2C {
+	if scheme == "h2c" {
 		req.URL.Scheme = "http"
 	} else {
-		req.URL.Scheme = p.TargetURL.Scheme
+		req.URL.Scheme = scheme
 	}
 	req.URL.Host = p.TargetURL.Host
 	req.URL.Path, req.URL.RawPath = joinURLPath(p.TargetURL, req.URL)
@@ -472,7 +472,8 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 		roundTripMutex sync.Mutex
 		roundTripDone  bool
 	)
-	if req.Header.Get("Expect") != "" {
+	has1xxTrace := req.Header.Get("Expect") != ""
+	if has1xxTrace {
 		trace := &httptrace.ClientTrace{
 			Got1xxResponse: func(code int, header textproto.MIMEHeader) error {
 				roundTripMutex.Lock()
@@ -494,19 +495,38 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 		outreq = outreq.WithContext(httptrace.WithClientTrace(outreq.Context(), trace)) //nolint:contextcheck
 	}
 
+	targetScheme := p.TargetURL.Scheme
+	retriedScheme := false
+	var origURL url.URL
+	haveOrigURL := p.OnSchemeMisMatch != nil && outreq.URL != nil
+	if haveOrigURL {
+		origURL = *outreq.URL
+	}
+
 retry:
-	p.rewriteRequestURL(outreq)
+	p.rewriteRequestURL(outreq, targetScheme)
 	res, err := transport.RoundTrip(outreq)
 
 	roundTripMutex.Lock()
 	roundTripDone = true
 	roundTripMutex.Unlock()
 	if err != nil {
-		if p.OnSchemeMisMatch != nil {
+		if p.OnSchemeMisMatch != nil && !retriedScheme {
 			var tlsErr tls.RecordHeaderError
 			if errors.Is(err, http.ErrSchemeMismatch) || errors.As(err, &tlsErr) {
-				retry := p.OnSchemeMisMatch()
+				retryScheme, retry := p.OnSchemeMisMatch(targetScheme)
 				if retry {
+					retriedScheme = true
+					targetScheme = retryScheme
+					if haveOrigURL {
+						u := origURL
+						outreq.URL = &u
+					}
+					if has1xxTrace {
+						roundTripMutex.Lock()
+						roundTripDone = false
+						roundTripMutex.Unlock()
+					}
 					goto retry
 				}
 			}
