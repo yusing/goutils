@@ -26,6 +26,9 @@ func waitForBackoff(ctx context.Context, delay time.Duration) error {
 }
 
 func shouldCacheResult(ctx context.Context, err error) bool {
+	if err == nil {
+		return true
+	}
 	cause := context.Cause(ctx)
 	if cause == nil {
 		return true

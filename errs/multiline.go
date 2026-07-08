@@ -122,7 +122,8 @@ func (m *MultilineError) Adds(s string) *MultilineError {
 	if indent > m.baseIndent {
 		// Indent increasing - add as child of the last added error
 		lastErr := m.parentStack[len(m.parentStack)-1]
-		m.ensureNested(lastErr).Extras = append(m.ensureNested(lastErr).Extras, newErr)
+		nested := m.ensureNested(lastErr)
+		nested.Extras = append(nested.Extras, newErr)
 		m.parentStack = append(m.parentStack, newErr)
 		m.indentStack = append(m.indentStack, indent)
 		m.baseIndent = indent
@@ -132,7 +133,8 @@ func (m *MultilineError) Adds(s string) *MultilineError {
 		parent := m.findParentForIndent(indent)
 
 		if parent != nil {
-			m.ensureNested(parent).Extras = append(m.ensureNested(parent).Extras, newErr)
+			nested := m.ensureNested(parent)
+			nested.Extras = append(nested.Extras, newErr)
 		} else {
 			// At root level
 			m.currentParent.(*nestedError).Extras = append(m.currentParent.(*nestedError).Extras, newErr)
@@ -144,7 +146,8 @@ func (m *MultilineError) Adds(s string) *MultilineError {
 		// Same indent level - add as sibling
 		parent := m.findParentForIndent(indent)
 		if parent != nil {
-			m.ensureNested(parent).Extras = append(m.ensureNested(parent).Extras, newErr)
+			nested := m.ensureNested(parent)
+			nested.Extras = append(nested.Extras, newErr)
 		} else {
 			// At root level
 			m.currentParent.(*nestedError).Extras = append(m.currentParent.(*nestedError).Extras, newErr)

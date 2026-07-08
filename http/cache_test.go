@@ -36,3 +36,81 @@ func TestCacheUpdateCookiesUpdatesCookiesMap(t *testing.T) {
 
 	require.Equal(t, got, want)
 }
+
+func TestJoinCookieValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		existing  []string
+		newCookie string
+		want      []string
+	}{
+		{
+			name:      "single value",
+			newCookie: "alpha",
+			want:      []string{"alpha"},
+		},
+		{
+			name:      "appends single value",
+			existing:  []string{"alpha"},
+			newCookie: "beta",
+			want:      []string{"alpha", "beta"},
+		},
+		{
+			name:      "splits semicolon values",
+			newCookie: "alpha; beta;gamma",
+			want:      []string{"alpha", "beta", "gamma"},
+		},
+		{
+			name:      "appends split semicolon values",
+			existing:  []string{"alpha"},
+			newCookie: "beta; gamma",
+			want:      []string{"alpha", "beta", "gamma"},
+		},
+		{
+			name:      "preserves empty semicolon parts",
+			newCookie: "alpha; ;",
+			want:      []string{"alpha", "", ""},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := joinCookieValues(tt.existing, tt.newCookie)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func BenchmarkJoinCookieValues(b *testing.B) {
+	benchmarks := []struct {
+		name      string
+		existing  []string
+		newCookie string
+	}{
+		{
+			name:      "single",
+			newCookie: "session-token",
+		},
+		{
+			name:      "append-single",
+			existing:  []string{"alpha"},
+			newCookie: "beta",
+		},
+		{
+			name:      "semicolon-three",
+			newCookie: "alpha; beta;gamma",
+		},
+		{
+			name:      "semicolon-empty",
+			newCookie: "alpha; ;",
+		},
+	}
+
+	for _, bm := range benchmarks {
+		b.Run(bm.name, func(b *testing.B) {
+			for b.Loop() {
+				_ = joinCookieValues(bm.existing, bm.newCookie)
+			}
+		})
+	}
+}

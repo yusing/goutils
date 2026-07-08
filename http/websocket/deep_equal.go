@@ -18,6 +18,11 @@ func DeepEqual(x, y any) bool {
 		return x == y
 	}
 
+	if sx, ok := x.(string); ok {
+		sy, ok := y.(string)
+		return ok && sx == sy
+	}
+
 	v1 := reflect.ValueOf(x)
 	v2 := reflect.ValueOf(y)
 

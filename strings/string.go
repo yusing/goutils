@@ -2,10 +2,13 @@ package strutils
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 )
+
+const indexFoldASCIIMaxLen = 64
 
 func Title(s string) string {
 	return cases.Title(language.AmericanEnglish).String(s)
@@ -16,6 +19,15 @@ func ContainsFold(s, substr string) bool {
 }
 
 func IndexFold(s, substr string) int {
+	if len(substr) == 0 {
+		return 0
+	}
+	if len(s) <= indexFoldASCIIMaxLen && isASCII(s) && isASCII(substr) {
+		if len(substr) > len(s) {
+			return -1
+		}
+		return indexFoldASCII(s, substr)
+	}
 	return strings.Index(strings.ToLower(s), strings.ToLower(substr))
 }
 
@@ -39,6 +51,41 @@ func ToLowerNoSnake(s string) string {
 		buf.WriteRune(r)
 	}
 	return buf.String()
+}
+
+func indexFoldASCII(s, substr string) int {
+	first := lowerASCII(substr[0])
+	last := len(s) - len(substr)
+
+next:
+	for i := 0; i <= last; i++ {
+		if lowerASCII(s[i]) != first {
+			continue
+		}
+		for j := 1; j < len(substr); j++ {
+			if lowerASCII(s[i+j]) != lowerASCII(substr[j]) {
+				continue next
+			}
+		}
+		return i
+	}
+	return -1
+}
+
+func lowerASCII(c byte) byte {
+	if 'A' <= c && c <= 'Z' {
+		return c + 'a' - 'A'
+	}
+	return c
+}
+
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
 }
 
 //nolint:intrange
@@ -69,7 +116,7 @@ func LevenshteinDistance(a, b string) int {
 				cost = 1
 			}
 
-			v1[j+1] = min3(v1[j]+1, v0[j+1]+1, v0[j]+cost)
+			v1[j+1] = min(v1[j]+1, v0[j+1]+1, v0[j]+cost)
 		}
 
 		for j := 0; j <= len(b); j++ {
@@ -78,14 +125,4 @@ func LevenshteinDistance(a, b string) int {
 	}
 
 	return v1[len(b)]
-}
-
-func min3(a, b, c int) int {
-	if a < b && a < c {
-		return a
-	}
-	if b < a && b < c {
-		return b
-	}
-	return c
 }

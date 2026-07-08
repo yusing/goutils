@@ -2,6 +2,7 @@ package strutils
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -37,4 +38,26 @@ func TestRedacted(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(`{"value": "test"}`), &v))
 		require.Equal(t, "test", v.Value.String())
 	})
+}
+
+func BenchmarkRedact(b *testing.B) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "Short", input: "test"},
+		{name: "Medium", input: "testtest"},
+		{name: "StaticBoundary", input: strings.Repeat("a", 67)},
+		{name: "LongBoundary", input: strings.Repeat("a", 68)},
+		{name: "Long", input: strings.Repeat("a", 256)},
+		{name: "Large", input: strings.Repeat("a", 4096)},
+	}
+
+	for _, tt := range tests {
+		b.Run(tt.name, func(b *testing.B) {
+			for b.Loop() {
+				_ = Redact(tt.input)
+			}
+		})
+	}
 }
