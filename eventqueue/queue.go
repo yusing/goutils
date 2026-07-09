@@ -10,13 +10,12 @@ import (
 
 type (
 	EventQueue[Event any] struct {
-		task          *task.Task
-		queue         []Event
-		ticker        *time.Ticker
-		flushInterval time.Duration
-		onFlush       OnFlushFunc[Event]
-		onError       OnErrorFunc
-		debug         bool
+		task    *task.Task
+		queue   []Event
+		ticker  *time.Ticker
+		onFlush OnFlushFunc[Event]
+		onError OnErrorFunc
+		debug   bool
 	}
 	OnFlushFunc[Event any] = func(events []Event)
 	OnErrorFunc            = func(err error)
@@ -59,56 +58,78 @@ func New[Event any](queueTask *task.Task, opt Options[Event]) *EventQueue[Event]
 		opt.FlushInterval = defaultEventQueueFlushInterval
 	}
 	return &EventQueue[Event]{
-		task:          queueTask,
-		queue:         make([]Event, 0, capacity),
-		ticker:        time.NewTicker(opt.FlushInterval),
-		flushInterval: opt.FlushInterval,
-		onFlush:       opt.OnFlush,
-		onError:       opt.OnError,
+		task:    queueTask,
+		queue:   make([]Event, 0, capacity),
+		ticker:  time.NewTicker(opt.FlushInterval),
+		onFlush: opt.OnFlush,
+		onError: opt.OnError,
+		debug:   opt.Debug,
 	}
 }
 
 func (e *EventQueue[Event]) Start(eventCh <-chan Event, errCh <-chan error) {
-	origOnFlush := e.onFlush
-	// recover panic in onFlush when in production mode
-	e.onFlush = func(events []Event) {
+	onFlush := e.onFlush
+	flush := func(events []Event) (err error) {
 		defer func() {
 			if errV := recover(); errV != nil {
-				var err gperr.Error
+				var recovered gperr.Error
 				switch errV := errV.(type) {
 				case error:
-					err = gperr.PrependSubject(errV, e.task.Name())
+					recovered = gperr.PrependSubject(errV, e.task.Name())
 				default:
-					err = gperr.New("recovered panic in onFlush").Withf("%v", errV).Subject(e.task.Name())
+					recovered = gperr.New("recovered panic in onFlush").Withf("%v", errV).Subject(e.task.Name())
 				}
 				if e.debug {
-					err = err.Withf("%s", debug.Stack())
+					recovered = recovered.Withf("%s", debug.Stack())
 				}
-				e.onError(err)
+				err = recovered
 			}
 		}()
-		origOnFlush(events)
+		onFlush(events)
+		return nil
+	}
+	startFlush := func() <-chan error {
+		queue := make([]Event, len(e.queue))
+		copy(queue, e.queue)
+		e.queue = e.queue[:0]
+
+		done := make(chan error, 1)
+		go func() {
+			done <- flush(queue)
+		}()
+		return done
+	}
+	handleError := func(err error) {
+		if err != nil && e.onError != nil {
+			e.onError(err)
+		}
 	}
 
 	go func() {
 		defer e.ticker.Stop()
 		defer e.task.Finish(nil)
 
+		var flushDone <-chan error
+		defer func() {
+			if flushDone != nil {
+				handleError(<-flushDone)
+			}
+		}()
+
 		for {
 			select {
 			case <-e.task.Context().Done():
 				return
 			case <-e.ticker.C:
-				if len(e.queue) > 0 {
-					// clone -> clear -> flush
-					queue := make([]Event, len(e.queue))
-					copy(queue, e.queue)
-
-					e.queue = e.queue[:0]
-
-					e.onFlush(queue)
+				if flushDone == nil && len(e.queue) > 0 {
+					flushDone = startFlush()
 				}
-				e.ticker.Reset(e.flushInterval)
+			case err := <-flushDone:
+				handleError(err)
+				flushDone = nil
+				if len(e.queue) > 0 {
+					flushDone = startFlush()
+				}
 			case event, ok := <-eventCh:
 				if !ok {
 					return
@@ -118,9 +139,7 @@ func (e *EventQueue[Event]) Start(eventCh <-chan Event, errCh <-chan error) {
 				if !ok {
 					return
 				}
-				if err != nil {
-					e.onError(err)
-				}
+				handleError(err)
 			}
 		}
 	}()

@@ -64,13 +64,12 @@ queue.Start(eventCh, errCh)
 
 ```go
 type EventQueue[Event any] struct {
-    task          *task.Task
-    queue         []Event
-    ticker        *time.Ticker
-    flushInterval time.Duration
-    onFlush       OnFlushFunc[Event]
-    onError       OnErrorFunc
-    debug         bool
+    task    *task.Task
+    queue   []Event
+    ticker  *time.Ticker
+    onFlush OnFlushFunc[Event]
+    onError OnErrorFunc
+    debug   bool
 }
 ```
 
@@ -83,7 +82,6 @@ A generic event queue that buffers events and flushes them in batches.
 | `task`          | `*task.Task`         | Lifetime management for the queue     |
 | `queue`         | `[]Event`            | Internal buffer for pending events    |
 | `ticker`        | `*time.Ticker`       | Timer for flush intervals             |
-| `flushInterval` | `time.Duration`      | How often to flush buffered events    |
 | `onFlush`       | `OnFlushFunc[Event]` | Callback invoked with batch of events |
 | `onError`       | `OnErrorFunc`        | Callback invoked on errors or panics  |
 | `debug`         | `bool`               | Enable debug mode for stack traces    |
@@ -172,11 +170,13 @@ Begins processing events from the provided channels.
    - Event channel (`event, ok := <-eventCh`)
    - Error channel (`err, ok := <-errCh`)
 
-2. On flush: clones queue, clears it, invokes `onFlush`
+2. On flush: clones queue, clears it, invokes `onFlush` in a single in-flight flush goroutine
 
-3. On panic: recovers, sends error to `onError`, continues
+3. While `onFlush` runs, continues buffering new events and flushes them after the active flush finishes
 
-4. On task done: stops ticker, calls `task.Finish(nil)`
+4. On panic: recovers, sends error to `onError`, continues
+
+5. On task done: waits for the active flush, stops ticker, calls `task.Finish(nil)`
 
 ## Architecture
 
@@ -196,6 +196,7 @@ sequenceDiagram
             EventQueue->>EventQueue: Clone queue
             EventQueue->>EventQueue: Clear buffer
             EventQueue->>Processor: onFlush(events)
+            Note over EventQueue: Continue buffering new events while flush runs
         end
     end
 
@@ -212,7 +213,8 @@ stateDiagram-v2
     [*] --> Empty: Start()
     Empty --> Buffering: Event received
     Buffering --> Flushing: Flush interval reached
-    Flushing --> Buffering: Reset timer
+    Flushing --> Buffering: Event received during active flush
+    Flushing --> Flushing: Pending events flush after active flush
     Buffering --> Empty: Task cancelled
     Flushing --> Empty: Task cancelled
     Flushing --> [*]: Finish()
@@ -282,28 +284,29 @@ None exposed.
 | Channel closed   | `!ok` on receive          | Queue stops                        |
 | Panic in onFlush | `recover()`               | Error sent to `onError`, continues |
 | Task cancelled   | `<-task.Context().Done()` | Queue stops, events discarded      |
-| Queue full       | `append()` blocks         | Sender blocks                      |
+| Flush blocked    | Active `onFlush` running  | Events keep buffering in memory    |
 
 ### Panic Recovery
 
 ```go
-e.onFlush = func(events []Event) {
+flush := func(events []Event) (err error) {
     defer func() {
         if errV := recover(); errV != nil {
-            var err gperr.Error
+            var recovered gperr.Error
             switch errV := errV.(type) {
             case error:
-                err = gperr.PrependSubject(errV, e.task.Name())
+                recovered = gperr.PrependSubject(errV, e.task.Name())
             default:
-                err = gperr.New("recovered panic in onFlush").Withf("%v", errV).Subject(e.task.Name())
+                recovered = gperr.New("recovered panic in onFlush").Withf("%v", errV).Subject(e.task.Name())
             }
             if e.debug {
-                err = err.Withf("%s", debug.Stack())
+                recovered = recovered.Withf("%s", debug.Stack())
             }
-            e.onError(err)
+            err = recovered
         }
     }()
-    origOnFlush(events)
+    onFlush(events)
+    return nil
 }
 ```
 
