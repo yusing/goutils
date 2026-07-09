@@ -117,6 +117,7 @@ func NewManagerWithUpgrade(c *gin.Context) (*Manager, error) {
 	var noPing bool
 	if gin.Mode() == gin.DebugMode {
 		if v, _ := c.GetQuery("no-ping"); v == "true" || v == "1" {
+			noPing = true
 			cm.pingCheckTicker.Stop()
 		}
 	}
