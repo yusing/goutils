@@ -5,12 +5,12 @@ go 1.26.4
 replace github.com/yusing/goutils => ../
 
 require (
-	github.com/pires/go-proxyproto v0.14.0
+	github.com/pires/go-proxyproto v0.15.0
 	github.com/quic-go/quic-go v0.60.0
 	github.com/rs/zerolog v1.35.1
 	github.com/samber/slog-zerolog/v2 v2.9.2
 	github.com/yusing/goutils v0.7.0
-	golang.org/x/net v0.56.0
+	golang.org/x/net v0.57.0
 )
 
 require (
@@ -20,7 +20,7 @@ require (
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/samber/lo v1.53.0 // indirect
 	github.com/samber/slog-common v0.22.0 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )
