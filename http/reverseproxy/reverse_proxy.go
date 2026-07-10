@@ -388,7 +388,7 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 		// Issue 46866). Although calling Close doesn't guarantee there isn't
 		// any Read in flight after the handle returns, in practice it's safe to
 		// read after closing it.
-		defer outreq.Body.Close()
+		defer func() { _ = outreq.Body.Close() }()
 	}
 	if outreq.Header == nil {
 		outreq.Header = make(http.Header) // Issue 33142: historical behavior was to always allocate
@@ -516,6 +516,16 @@ retry:
 			if errors.Is(err, http.ErrSchemeMismatch) || errors.As(err, &tlsErr) {
 				retryScheme, retry := p.OnSchemeMisMatch(targetScheme)
 				if retry {
+					if outreq.Body != nil {
+						if outreq.GetBody == nil {
+							goto noRetry
+						}
+						body, getBodyErr := outreq.GetBody()
+						if getBodyErr != nil {
+							goto noRetry
+						}
+						outreq.Body = &noopCloseReader{readCloser: body}
+					}
 					retriedScheme = true
 					targetScheme = retryScheme
 					if haveOrigURL {
@@ -531,6 +541,7 @@ retry:
 				}
 			}
 		}
+	noRetry:
 		p.errorHandler(rw, outreq, err, false)
 		res = newOriginUnreachableResponse(req)
 	}

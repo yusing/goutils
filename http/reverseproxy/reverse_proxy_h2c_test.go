@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -161,6 +162,44 @@ func TestReverseProxySchemeRetryDoesNotMutateTargetURL(t *testing.T) {
 			t.Fatalf("round trip %d url = %q, want %q", i, gotURLs[i], want)
 		}
 	}
+}
+
+func TestReverseProxySchemeRetryBody(t *testing.T) {
+	t.Run("replays recreatable body", func(t *testing.T) {
+		target, err := url.Parse("http://backend.local")
+		if err != nil { t.Fatal(err) }
+		var bodies []string
+		transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			body, err := io.ReadAll(req.Body)
+			if err != nil { t.Fatal(err) }
+			bodies = append(bodies, string(body))
+			if len(bodies) == 1 {
+				return nil, http.ErrSchemeMismatch
+			}
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok")), Request: req}, nil
+		})
+		rp := NewReverseProxy("retry", target, transport)
+		rp.OnSchemeMisMatch = func(string) (string, bool) { return "https", true }
+		req := httptest.NewRequest(http.MethodPost, "http://proxy.local/", strings.NewReader("payload"))
+		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("payload")), nil }
+		rp.ServeHTTP(httptest.NewRecorder(), req)
+		if !slices.Equal(bodies, []string{"payload", "payload"}) { t.Fatalf("bodies = %q", bodies) }
+	})
+
+	t.Run("does not replay non-recreatable body", func(t *testing.T) {
+		target, err := url.Parse("http://backend.local")
+		if err != nil { t.Fatal(err) }
+		calls := 0
+		transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			_, _ = io.ReadAll(req.Body)
+			return nil, http.ErrSchemeMismatch
+		})
+		rp := NewReverseProxy("retry", target, transport)
+		rp.OnSchemeMisMatch = func(string) (string, bool) { return "https", true }
+		rp.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "http://proxy.local/", strings.NewReader("payload")))
+		if calls != 1 { t.Fatalf("round trips = %d, want 1", calls) }
+	})
 }
 
 func TestH2CRoundTripper_AcceptsH2CSchemeAndRemovesUpgradeHeaders(t *testing.T) {
