@@ -5,8 +5,11 @@ package synk
 import (
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
+	"weak"
 
 	"github.com/rs/zerolog/log"
 	strutils "github.com/yusing/goutils/strings"
@@ -17,13 +20,54 @@ type poolCounters struct {
 	size atomic.Uint64
 }
 
+type bufferInUse struct {
+	ptr  weak.Pointer[byte]
+	size uint64
+}
+
 var (
 	nonPooled       poolCounters
 	dropped         poolCounters
 	reused          poolCounters
 	reusedRemaining poolCounters
 	gced            poolCounters
+	sizeInUse       atomic.Uint64
+	buffersInUse    sync.Map // map[uintptr]*bufferInUse
 )
+
+func addSizeInUse(b []byte) {
+	ptr := unsafe.SliceData(b)
+	if ptr == nil {
+		return
+	}
+
+	buffer := &bufferInUse{ptr: weak.Make(ptr), size: uint64(cap(b))}
+	if previous, loaded := buffersInUse.Swap(uintptr(unsafe.Pointer(ptr)), buffer); loaded {
+		sizeInUse.Add(-previous.(*bufferInUse).size)
+	}
+	sizeInUse.Add(buffer.size)
+}
+
+func removeSizeInUse(b []byte) {
+	ptr := unsafe.SliceData(b)
+	if ptr == nil {
+		return
+	}
+
+	if buffer, loaded := buffersInUse.LoadAndDelete(uintptr(unsafe.Pointer(ptr))); loaded {
+		sizeInUse.Add(-buffer.(*bufferInUse).size)
+	}
+}
+
+func pruneBuffersInUse() {
+	buffersInUse.Range(func(key, value any) bool {
+		buffer := value.(*bufferInUse)
+		if buffer.ptr.Value() == nil && buffersInUse.CompareAndDelete(key, buffer) {
+			sizeInUse.Add(-buffer.size)
+		}
+		return true
+	})
+}
 
 func addNonPooled(size int) {
 	nonPooled.num.Add(1)
@@ -70,7 +114,10 @@ func initPoolStats() {
 }
 
 func printPoolStats() {
+	pruneBuffersInUse()
+
 	log.Info().
+		Str("sizeInUse", strutils.FormatByteSize(sizeInUse.Load())).
 		Uint64("numReused", reused.num.Load()).
 		Str("sizeReused", strutils.FormatByteSize(reused.size.Load())).
 		Uint64("numDropped", dropped.num.Load()).

@@ -122,10 +122,14 @@ func (p UnsizedBytesPool) Get() []byte {
 				continue
 			}
 			addReused(cap(b))
-			return b[:0]
+			b = b[:0]
+			addSizeInUse(b)
+			return b
 		default:
 			addNonPooled(MinAllocSize)
-			return make([]byte, 0, MinAllocSize)
+			b := make([]byte, 0, MinAllocSize)
+			addSizeInUse(b)
+			return b
 		}
 	}
 }
@@ -136,7 +140,10 @@ func (p UnsizedBytesPool) GetAtLeast(n int) []byte {
 		return b
 	}
 	// discard the buffer
-	return make([]byte, 0, n)
+	removeSizeInUse(b)
+	b = make([]byte, 0, n)
+	addSizeInUse(b)
+	return b
 }
 
 // GetSized returns a slice of the given size.
@@ -144,12 +151,16 @@ func (p UnsizedBytesPool) GetAtLeast(n int) []byte {
 // Calling append to returned slice will cause undefined behavior.
 func (p *SizedBytesPool) GetSized(size int) []byte {
 	if size < p.min {
-		return pullOrMake(p.smallPool, p.min)[:size]
+		b := pullOrMake(p.smallPool, p.min)[:size]
+		addSizeInUse(b)
+		return b
 	}
 
 	if size > p.max {
 		addNonPooled(size)
-		return make([]byte, size)
+		b := make([]byte, size)
+		addSizeInUse(b)
+		return b
 	}
 
 	targetIdx := poolIdx(size)
@@ -175,9 +186,13 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 			remainingSize := capB - size
 			if remainingSize >= p.min { // remaining part > smallest pool size
 				p.put(b[size:], true)
-				return b[:size:size]
+				b = b[:size:size]
+				addSizeInUse(b)
+				return b
 			}
-			return b[:size]
+			b = b[:size]
+			addSizeInUse(b)
+			return b
 		default:
 			idx++ // try next pool if no buffer in current pool
 		}
@@ -189,15 +204,19 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 	// to the correct pool (targetIdx) when released, avoiding misplacement
 	// in a smaller pool.
 	buf := make([]byte, capacity)
-	return buf[:size]
+	buf = buf[:size]
+	addSizeInUse(buf)
+	return buf
 }
 
 //go:inline
 func (p UnsizedBytesPool) Put(b []byte) {
+	removeSizeInUse(b)
 	put(b, p.pool)
 }
 
 func (p *SizedBytesPool) Put(b []byte) {
+	removeSizeInUse(b)
 	p.put(b, false)
 }
 
