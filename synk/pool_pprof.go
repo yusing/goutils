@@ -26,13 +26,12 @@ type bufferInUse struct {
 }
 
 var (
-	nonPooled       poolCounters
-	dropped         poolCounters
-	reused          poolCounters
-	reusedRemaining poolCounters
-	gced            poolCounters
-	sizeInUse       atomic.Uint64
-	buffersInUse    sync.Map // map[uintptr]*bufferInUse
+	nonPooled    poolCounters
+	dropped      poolCounters
+	reused       poolCounters
+	gced         poolCounters
+	sizeInUse    atomic.Uint64
+	buffersInUse sync.Map // map[uintptr]*bufferInUse
 )
 
 func addSizeInUse(b []byte) {
@@ -84,11 +83,6 @@ func addDropped(size int) {
 	dropped.size.Add(uint64(size))
 }
 
-func addReusedRemaining(size int) {
-	reusedRemaining.num.Add(1)
-	reusedRemaining.size.Add(uint64(size))
-}
-
 func addGced(size int) {
 	gced.num.Add(1)
 	gced.size.Add(uint64(size))
@@ -124,8 +118,6 @@ func printPoolStats() {
 		Str("sizeDropped", strutils.FormatByteSize(dropped.size.Load())).
 		Uint64("numNonPooled", nonPooled.num.Load()).
 		Str("sizeNonPooled", strutils.FormatByteSize(nonPooled.size.Load())).
-		Uint64("numReusedRemaining", reusedRemaining.num.Load()).
-		Str("sizeReusedRemaining", strutils.FormatByteSize(reusedRemaining.size.Load())).
 		Uint64("numGced", gced.num.Load()).
 		Str("sizeGced", strutils.FormatByteSize(gced.size.Load())).
 		Msg("bytes pool stats")

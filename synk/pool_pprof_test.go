@@ -9,7 +9,7 @@ import (
 )
 
 func TestSizeInUse(t *testing.T) {
-	pool := UnsizedBytesPool{pool: make(chan weakBuf, 1)}
+	pool := UnsizedBytesPool{pool: newTypedWeakPool(1)}
 	before := sizeInUse.Load()
 
 	b := pool.GetAtLeast(2 * MinAllocSize)

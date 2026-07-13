@@ -32,16 +32,24 @@ buf = sizedPool.GetBuffer(size)
 defer sizedPool.PutBuffer(buf)
 ```
 
-For sizes in the sized pool’s normal range, **do not append** to the slice returned from `GetSized`; the implementation may rely on exact length and capacity for pooling (`GetSized` documents this as undefined behavior if you append).
+`GetSized` returns the requested length. The caller owns the returned slice and
+its visible capacity until `Put`. A prefix split from a larger tier has
+`cap == len`, so appending allocates before reaching the separately pooled tail.
+
+`Put` and `PutBuffer` transfer ownership to the pool. After either call, do not
+read, write, append to, or return the same buffer again. Reused memory is not
+zeroed; overwrite the required region before reading it or exposing it outside
+the process. Callers handling secrets must clear them before `Put`.
 
 ## Design Philosophy
 
 This pool implementation follows a tiered memory management strategy with several key goals:
 
 - Minimize allocations and reduce GC pressure — reuse buffers instead of allocating new ones
-- Reduce memory waste — match buffer sizes to actual needs through tiered sizing
+- Bound memory waste — match requests to geometric size tiers and limit
+  splitting to backing arrays no larger than 2 MiB
 - Prevent memory leaks — use weak references so collected buffers can disappear from pool slots
-- High performance — use buffered channels and `weak`/`unsafe` plumbing with minimal locking
+- High performance — use typed per-P storage and `weak`/`unsafe` plumbing
 
 ## Core Architecture
 
@@ -49,19 +57,21 @@ This pool implementation follows a tiered memory management strategy with severa
 
 #### `UnsizedBytesPool`
 
-- Single channel-backed pool for general-purpose buffers
+- Single typed per-P pool for general-purpose buffers
 - New buffers start at `MinAllocSize` (4 KiB)
 - Suited to variable-size use cases (`io.Copy`, and similar)
 
 #### `SizedBytesPool`
 
-- A **small-size channel** (`smallPool`) for requested lengths **below** the smallest tier capacity (see tiers below)
-- **Eleven tiered pools** whose nominal capacities are `allocSizes[i] = 1024 * (2 << i)` for `i = 0 … 10` (2 KiB through 2 MiB)
-- Requests **larger** than the largest tier allocate a dedicated `[]byte` with `make`; on `Put`, oversize backing stores are **split in half** recursively until each piece fits a tier (large allocations are rare)
+- **Eleven tiered pools** whose nominal capacities are `2 KiB << i` for
+  `i = 0 … 10` (2 KiB through 2 MiB)
+- Requests below 2 KiB use the first tier
+- Requests larger than 2 MiB allocate an exact-size `[]byte`; `Put` drops the
+  allocation instead of retaining aliases to one oversized backing array
 
 ### Weak reference mechanism
 
-The pool stores `weakBuf` values in channels:
+The pool stores `weakBuf` values directly in typed per-P queues:
 
 ```go
 type weakBuf struct {
@@ -87,36 +97,40 @@ func poolIdx(size int) int {
 
 `bits.Len(size-1)` locates the highest set bit; subtracting 11 aligns indexing with the tier scale. `poolIdx` maps a **capacity** (or requested size) to the smallest tier that can hold it.
 
-### Smart buffer splitting (`GetSized`)
+### Bounded tier fallback (`GetSized`)
 
-When a reused buffer is larger than the requested length, the tail may be returned to the pool:
+Each request checks its smallest fitting tier first, then larger tiers. When a
+larger buffer is reused, `GetSized` returns the requested prefix and puts a tail
+of at least 2 KiB back into the appropriate tier. The prefix capacity is capped
+at its length, keeping simultaneously borrowed pieces disjoint. Because sized
+tiers stop at 2 MiB and oversized buffers are dropped, one borrowed piece cannot
+pin an unbounded allocation. A complete miss allocates the target tier.
 
-```go
-remainingSize := capB - size
-if remainingSize >= p.min {
-	p.put(b[size:], true)
-	return b[:size:size]
-}
-return b[:size]
-```
-
-- If the **remainder** is at least `p.min`, the tail is `Put` back and the caller gets `b[:size:size]` so the visible **capacity equals the length** (consistent pooling for that logical size).
-- If the remainder would be **smaller than `p.min`**, it is not pooled; the caller receives `b[:size]` and keeps the full backing capacity so `Put` can still route the buffer to the correct tier.
-
-### Channel sizing
+### Typed per-P storage
 
 ```go
-func poolChannelSize(idx int) int {
+func poolSharedLimit(idx int) int {
 	return max(8, 256>>uint(idx))
 }
 ```
 
-Smaller tiers (hotter paths) get larger channels; larger tiers get smaller channels to bound memory.
+Each P has one private slot and one typed lock-free shared chain. Smaller tiers
+(hotter paths) get larger per-P shared limits; larger tiers get smaller limits.
+This removes channel contention and avoids the `any` boxing allocation incurred
+by storing `[]byte` in `sync.Pool`. Only weak-reference metadata is retained:
+the maximum number of entries is `(shared limit + 1) * GOMAXPROCS` per tier.
+
+The implementation adapts Go's `sync.Pool` and `poolChain` algorithms and calls
+`runtime.procPin`/`runtime.procUnpin` through linkname declarations. This is a
+deliberate performance/toolchain coupling; Go upgrades must run the pool tests,
+race detector, and benchmarks. Race builds use locked shared heads and omit the
+private slot so the race detector can verify the queue operations.
 
 ### `Put`
 
-- **Unsized:** `Put` enqueues a weak handle; if the channel is full, the buffer is dropped.
-- **Sized:** `Put` routes by **capacity** to `smallPool`, a tier channel, or splits oversized caps in half until each part fits a tier.
+- **Unsized:** `Put` stores a weak handle; if the local P's shared queue is full, the buffer is dropped.
+- **Sized:** `Put` routes by **capacity** to one tier. Buffers below the first
+  tier or above the last tier are dropped.
 
 ## Usage patterns
 
@@ -151,43 +165,83 @@ if err != nil {
 
 ### Benchmarks
 
-Benchmarks might not be exhaustive, but they are representative of the performance of the pool.
+`BenchmarkSizedPoolPatterns` covers steady reuse, mixed sizes,
+concurrent access, and oversized returns. `BenchmarkSizedPoolArchitectures`
+compares exact-tier lookup, whole-buffer fallback, and bounded split fallback
+for cold tier-skew bursts and oversized returns.
 
-#### Randomly sized buffers within 4MB
+`BenchmarkSizedPoolBackends` compares the typed per-P pool, weak-channel
+storage, and standard `sync.Pool` under identical tier and
+split policies. `BenchmarkSizedPoolBackendBursts` additionally exercises the
+shared chains instead of only private-slot reuse. The typed pool omits the
+standard victim cache because weak entries do not retain backing arrays.
 
-| Benchmark      | Iterations | ns/op   | B/op      | allocs/op |
-| -------------- | ---------- | ------- | --------- | --------- |
-| GetAll/unsized | 2,236,105  | 555.9   | 34        | 2         |
-| GetAll/sized   | 842,488    | 1,425   | 90        | 4         |
-| GetAll/make    | 6,498      | 194,062 | 1,039,898 | 1         |
+`BenchmarkSizedPoolDeadRecovery` measures post-GC recovery episodes: limiting
+a pull to eight dead entries causes 32 consecutive misses for a full 256-entry
+sized tier and 512 misses for the 4096-entry unsized pool, while draining the
+tier causes one miss. Production therefore drains dead entries until finding a
+live buffer or an empty queue.
 
-#### Randomly sized buffers (may exceed 4MB)
+Recorded implementation comparison on Go 1.26.5, linux/amd64, Intel i5-13500
+(`count=8`, median):
+cells show time, B/op, and allocs/op.
 
-| Benchmark                | Iterations | ns/op   | B/op      | allocs/op |
-| ------------------------ | ---------- | ------- | --------- | --------- |
-| GetAllExceedsMax/unsized | 2,203,759  | 544.3   | 37        | 2         |
-| GetAllExceedsMax/sized   | 1,312,588  | 941.9   | 72        | 3         |
-| GetAllExceedsMax/make    | 3,937      | 336,113 | 2,126,743 | 1         |
+| Production pattern | Result |
+| --- | ---: |
+| Sub-tier steady reuse | 34.7 ns, 0 B, 0 allocs |
+| Exact-tier steady reuse | 34.1 ns, 0 B, 0 allocs |
+| Mixed common sizes | 35.6 ns, 0 B, 0 allocs |
+| Parallel 32 KiB, 8 CPUs | 5.38 ns, 0 B, 0 allocs |
+| Oversized return | 1.14 ns, 0 B, 0 allocs |
 
-#### Concurrent allocations
+| Cold tier-skew burst | Exact tier | Whole fallback | Split fallback |
+| --- | ---: | ---: | ---: |
+| 4 KiB → 2 KiB | 3.91 µs, 32 KiB, 16 allocs | 3.15 µs, 16 KiB, 8 allocs | 771 ns, 0 B, 0 allocs |
+| 8 KiB → 3 KiB | 7.05 µs, 64 KiB, 16 allocs | 4.71 µs, 32 KiB, 8 allocs | 1.07 µs, 0 B, 0 allocs |
+| 256 KiB → 32 KiB | 140 µs, 2 MiB, 64 allocs | 127 µs, 1.75 MiB, 56 allocs | 3.60 µs, 0 B, 0 allocs |
 
-| Benchmark          | Iterations | ns/op   | ns/op_alloc | ns/op_total | ns/op_work | B/op    | allocs/op |
-| ------------------ | ---------- | ------- | ----------- | ----------- | ---------- | ------- | --------- |
-| workers-1-unsized  | 3,978      | 294,875 | 1,302       | 293,926     | 292,624    | 3,408   | 3         |
-| workers-1-sized    | 4,286      | 296,334 | 1,237       | 295,218     | 293,981    | 2,930   | 5         |
-| workers-1-make     | 3,340      | 415,523 | 97,299      | 415,409     | 318,110    | 492,239 | 2         |
-| workers-2-unsized  | 8,292      | 147,362 | 830.0       | 294,031     | 293,201    | 3,269   | 2         |
-| workers-2-sized    | 8,336      | 148,185 | 1,176       | 295,486     | 294,310    | 2,436   | 5         |
-| workers-2-make     | 5,412      | 219,521 | 93,075      | 440,315     | 347,240    | 493,141 | 2         |
-| workers-4-unsized  | 15,853     | 74,667  | 1,378       | 298,151     | 296,773    | 3,417   | 2         |
-| workers-4-sized    | 16,075     | 75,170  | 2,202       | 299,441     | 297,239    | 6,767   | 5         |
-| workers-4-make     | 9,884      | 115,854 | 81,081      | 462,411     | 381,330    | 486,525 | 1         |
-| workers-8-unsized  | 28,244     | 42,162  | 1,735       | 336,454     | 334,719    | 3,830   | 2         |
-| workers-8-sized    | 26,013     | 46,224  | 2,310       | 368,261     | 365,951    | 4,932   | 5         |
-| workers-8-make     | 16,420     | 71,518  | 108,927     | 570,788     | 461,861    | 496,645 | 1         |
-| workers-16-unsized | 43,272     | 29,189  | 3,696       | 463,896     | 460,200    | 4,983   | 2         |
-| workers-16-sized   | 36,670     | 34,641  | 6,803       | 548,070     | 541,267    | 7,382   | 5         |
-| workers-16-make    | 19,166     | 65,258  | 299,753     | 1,011,464   | 711,711    | 489,229 | 2         |
-| workers-32-unsized | 32,059     | 38,423  | 19,663      | 749,792     | 730,129    | 13,229  | 2         |
-| workers-32-sized   | 35,071     | 37,116  | 23,897      | 726,144     | 702,247    | 15,378  | 5         |
-| workers-32-make    | 19,437     | 63,402  | 578,680     | 1,356,542   | 777,862    | 466,336 | 2         |
+Extreme fallback results compare an experimental 8× search limit with
+unrestricted splitting. A single unrestricted fallback pins the 2 MiB seed while borrowed;
+the 8× limit leaves that weak entry unused and allocates a 2 KiB buffer.
+
+| 2 MiB → 2 KiB | Exact tier | Whole fallback | Split fallback | Split max 8× |
+| --- | ---: | ---: | ---: | ---: |
+| One request | 324 ns, 2 KiB, 1 alloc | 203 ns, 0 B, 0 allocs | 234 ns, 0 B, 0 allocs | 348 ns, 2 KiB, 1 alloc |
+| 32-request burst | 6.88 µs, 64 KiB, 32 allocs | 9.75 µs, 62 KiB, 31 allocs | 4.77 µs, 0 B, 0 allocs | 7.57 µs, 64 KiB, 32 allocs |
+
+The limit bounds pinning but restores every avoided allocation in a skewed
+burst. Because sized backing arrays are already capped at 2 MiB, production
+keeps unrestricted in-range splitting.
+
+For a 64 MiB oversized return, dropping takes 1.37 ns median; recursive
+splitting takes 1.13 µs and creates reusable slices that can pin the entire
+oversized backing allocation. Sized fallback therefore splits only allocations
+already bounded by the 2 MiB maximum tier.
+
+Backend comparison from sequential `go test` processes on the same host
+(`count=8`, median):
+
+| Pattern | Weak channel | `sync.Pool` | Typed per-P |
+| --- | ---: | ---: | ---: |
+| Serial hot tier | 57.6 ns, 0 B, 0 allocs | 33.8 ns, 24 B, 1 alloc | 37.2 ns, 0 B, 0 allocs |
+| Serial mixed tiers | 60.4 ns, 0 B, 0 allocs | 34.0 ns, 24 B, 1 alloc | 35.8 ns, 0 B, 0 allocs |
+| Parallel hot tier, 8 CPUs | 82.9 ns, 0 B, 0 allocs | 10.0 ns, 24 B, 1 alloc | 5.53 ns, 0 B, 0 allocs |
+| Parallel mixed tiers, 8 CPUs | 113 ns, 0 B, 0 allocs | 7.72 ns, 29 B, 1 alloc | 7.75 ns, 0 B, 0 allocs |
+
+Shared-chain burst results (`count=8`, median):
+
+| Pattern | Weak channel | `sync.Pool` | Typed per-P |
+| --- | ---: | ---: | ---: |
+| Serial burst of 16 | 891 ns, 0 B, 0 allocs | 775 ns, 384 B, 16 allocs | 918 ns, 0 B, 0 allocs |
+| Parallel burst of 8, 8 CPUs | 1.63 µs, ~4.8 KiB, 0 allocs | 122 ns, 196 B, 8 allocs | 76.9 ns, 0 B, 0 allocs |
+
+Parallel rows report aggregate `RunParallel` throughput per operation, not
+single-operation latency. They expose contention as concurrency increases.
+
+Run focused pool benchmarks from `goutils/` with:
+
+```sh
+shadowtree test ./synk -run=^$ -bench='^BenchmarkSizedPool(Patterns|Architectures)$' -benchmem -count=8
+shadowtree test ./synk -run=^$ -bench='^BenchmarkSizedPoolBackend(s|Bursts)$' -benchmem -count=8 -cpu=1,8
+shadowtree test ./synk -run=^$ -bench='^BenchmarkSizedPoolDeadRecovery$' -benchmem -benchtime=100x
+```

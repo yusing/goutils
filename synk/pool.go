@@ -8,17 +8,13 @@ import (
 )
 
 type UnsizedBytesPool struct {
-	pool chan weakBuf
+	pool *typedWeakPool
 }
 
 type SizedBytesPool struct {
-	// 1024*(2<<i) bytes
-	// 4KiB, 8KiB, 16KiB, 32KiB, 64KiB
-	// , 128KiB, 256KiB, 512KiB, 1MiB, 2MiB, 4MiB
-	pools     [SizedPools]chan weakBuf
-	smallPool chan weakBuf // everything smaller than allocSize(0)
-
-	min, max int
+	// 2KiB, 4KiB, 8KiB, 16KiB, 32KiB, 64KiB,
+	// 128KiB, 256KiB, 512KiB, 1MiB, 2MiB.
+	pools [SizedPools]*typedWeakPool
 }
 
 const (
@@ -32,13 +28,12 @@ const (
 	MinAllocSize    = 4 * kb
 	UnsizedPoolSize = UnsizedPoolLimit / MinAllocSize
 
-	SizedPools           = 11
-	SmallPoolChannelSize = UnsizedPoolSize
+	SizedPools = 11
 )
 
-// poolChannelSize returns the channel size for a given pool index.
-// Smaller buffers (lower idx) are used more frequently, so they get larger channels.
-func poolChannelSize(idx int) int {
+// poolSharedLimit returns the per-P shared queue limit for a pool index.
+// Smaller buffers (lower idx) are used more frequently, so they get larger queues.
+func poolSharedLimit(idx int) int {
 	return max(8, 256>>uint(idx))
 }
 
@@ -47,10 +42,8 @@ var (
 	sizedBytesPool   SizedBytesPool
 )
 
-var allocSizes [SizedPools]int
-
 func allocSize(idx int) int {
-	return allocSizes[idx]
+	return 2 * kb << idx
 }
 
 // poolIdx returns the index of the pool that guarantees the pool size is greater than or equal to the given size.
@@ -66,17 +59,10 @@ func init() {
 }
 
 func initAll() {
-	unsizedBytesPool.pool = make(chan weakBuf, UnsizedPoolSize)
+	unsizedBytesPool.pool = newTypedWeakPool(UnsizedPoolSize)
 
-	for i := range allocSizes {
-		allocSizes[i] = 1024 * (2 << i)
-	}
-
-	sizedBytesPool.min = allocSize(0)
-	sizedBytesPool.max = allocSize(SizedPools - 1)
-	sizedBytesPool.smallPool = make(chan weakBuf, SmallPoolChannelSize)
 	for i := range sizedBytesPool.pools {
-		sizedBytesPool.pools[i] = make(chan weakBuf, poolChannelSize(i))
+		sizedBytesPool.pools[i] = newTypedWeakPool(poolSharedLimit(i))
 	}
 
 	initPoolStats()
@@ -98,40 +84,36 @@ func (p UnsizedBytesPool) GetBufferAtLeast(size int) *bytes.Buffer {
 	return bytes.NewBuffer(p.GetAtLeast(size))
 }
 
+// PutBuffer resets buf and returns it to the pool. The caller must not access
+// buf after PutBuffer. Buffer contents are not cleared before reuse.
 func (p UnsizedBytesPool) PutBuffer(buf *bytes.Buffer) {
 	buf.Reset()
 	p.Put(buf.Bytes())
 }
 
 func (p *SizedBytesPool) GetBuffer(size int) *bytes.Buffer {
-	return bytes.NewBuffer(p.GetSized(size))
+	return bytes.NewBuffer(p.GetSized(size)[:0])
 }
 
-// PutBuffer resets and puts the buffer into the pool.
+// PutBuffer resets buf and returns it to the pool. The caller must not access
+// buf after PutBuffer. Buffer contents are not cleared before reuse.
 func (p *SizedBytesPool) PutBuffer(buf *bytes.Buffer) {
 	buf.Reset()
 	p.Put(buf.Bytes())
 }
 
 func (p UnsizedBytesPool) Get() []byte {
-	for {
-		select {
-		case bWeak := <-p.pool:
-			b := getBufFromWeak(bWeak)
-			if b == nil {
-				continue
-			}
-			addReused(cap(b))
-			b = b[:0]
-			addSizeInUse(b)
-			return b
-		default:
-			addNonPooled(MinAllocSize)
-			b := make([]byte, 0, MinAllocSize)
-			addSizeInUse(b)
-			return b
-		}
+	b := pull(p.pool, 0)
+	if b != nil {
+		b = b[:0]
+		addSizeInUse(b)
+		return b
 	}
+
+	addNonPooled(MinAllocSize)
+	b = make([]byte, 0, MinAllocSize)
+	addSizeInUse(b)
+	return b
 }
 
 func (p UnsizedBytesPool) GetAtLeast(n int) []byte {
@@ -147,16 +129,10 @@ func (p UnsizedBytesPool) GetAtLeast(n int) []byte {
 }
 
 // GetSized returns a slice of the given size.
-// If the size is 0, the returned slice is from the unsized pool.
-// Calling append to returned slice will cause undefined behavior.
+// If size is 0, the returned slice has zero length and the capacity of the
+// smallest sized tier.
 func (p *SizedBytesPool) GetSized(size int) []byte {
-	if size < p.min {
-		b := pullOrMake(p.smallPool, p.min)[:size]
-		addSizeInUse(b)
-		return b
-	}
-
-	if size > p.max {
+	if size > allocSize(SizedPools-1) {
 		addNonPooled(size)
 		b := make([]byte, size)
 		addSizeInUse(b)
@@ -164,120 +140,88 @@ func (p *SizedBytesPool) GetSized(size int) []byte {
 	}
 
 	targetIdx := poolIdx(size)
-	idx := targetIdx
-	for idx < SizedPools {
-		select {
-		case bWeak := <-p.pools[idx]:
-			b := getBufFromWeak(bWeak)
-			if b == nil {
-				continue // try same pool again
-			}
-
-			// FIXME: this should not happen, but it does
-			// cap(p.pools[poolIdx(size)]) should be >= allocSize(idx)
-			capB := cap(b)
-			if capB < size {
-				p.put(b, false)
-				continue
-			}
-			addReused(size)
-			b = b[:capB] // set len to cap for further slicing
-
-			remainingSize := capB - size
-			if remainingSize >= p.min { // remaining part > smallest pool size
-				p.put(b[size:], true)
-				b = b[:size:size]
-				addSizeInUse(b)
-				return b
-			}
-			b = b[:size]
-			addSizeInUse(b)
-			return b
-		default:
-			idx++ // try next pool if no buffer in current pool
+	for idx := targetIdx; idx < SizedPools; idx++ {
+		buf := pull(p.pools[idx], size)
+		if buf == nil {
+			continue
 		}
+
+		capB := cap(buf)
+		buf = buf[:capB]
+		if size > 0 && capB-size >= allocSize(0) {
+			p.put(buf[size:])
+			buf = buf[:size:size]
+		} else {
+			buf = buf[:size]
+		}
+		addSizeInUse(buf)
+		return buf
 	}
 
 	capacity := allocSize(targetIdx)
 	addNonPooled(capacity)
-	// Allocate a buffer with the exact pool capacity to ensure it's returned
-	// to the correct pool (targetIdx) when released, avoiding misplacement
-	// in a smaller pool.
-	buf := make([]byte, capacity)
-	buf = buf[:size]
+	buf := make([]byte, size, capacity)
 	addSizeInUse(buf)
 	return buf
 }
 
+// Put returns b to the pool. The caller must not access b after Put.
+// Buffer contents are not cleared before reuse.
+//
 //go:inline
 func (p UnsizedBytesPool) Put(b []byte) {
 	removeSizeInUse(b)
 	put(b, p.pool)
 }
 
+// Put returns b to the pool. The caller must not access b after Put.
+// Buffer contents are not cleared before reuse.
 func (p *SizedBytesPool) Put(b []byte) {
 	removeSizeInUse(b)
-	p.put(b, false)
+	p.put(b)
 }
 
-func (p *SizedBytesPool) put(b []byte, isRemaining bool) {
+func (p *SizedBytesPool) put(b []byte) {
 	capB := cap(b)
 
-	if capB < p.min {
-		put(b, p.smallPool)
+	if capB < allocSize(0) || capB > allocSize(SizedPools-1) {
+		addDropped(capB)
 		return
 	}
 
-	if capB <= p.max {
-		idx := poolIdx(capB)
-		// e.g. cap=8190, allocSize will be 8192, so we need to put it in the previous pool
-		// since the `if capB < p.min` check has already failed,
-		// capB < allocSize(idx) only happens when idx > 0
-		if capB < allocSize(idx) {
-			idx--
-		}
-		put(b, p.pools[idx])
-		if isRemaining {
-			addReusedRemaining(capB)
-		}
-		return
+	idx := poolIdx(capB)
+	// Capacities between tiers belong to the largest tier they can satisfy.
+	if capB < allocSize(idx) {
+		idx--
 	}
-
-	// too large, split and put again
-	// large buffers are rare, and unlikely to be used again, so make use of it for smaller pools
-	cap1 := capB / 2
-	b = b[:capB]
-	p.put(b[:cap1:cap1], false)
-	p.put(b[cap1:], false)
+	put(b, p.pools[idx])
 }
 
-func pullOrMake(pool <-chan weakBuf, size int) []byte {
+func pull(pool *typedWeakPool, size int) []byte {
 	for {
-		select {
-		case bWeak := <-pool:
-			b := getBufFromWeak(bWeak)
-			if b == nil {
-				continue
-			}
-			capB := cap(b)
-			addReused(capB)
-			return b[:size]
-		default:
-			addNonPooled(size)
-			return make([]byte, size)
+		bWeak, ok := pool.Get()
+		if !ok {
+			return nil
 		}
+		b := getBufFromWeak(bWeak)
+		if b == nil {
+			continue
+		}
+		capB := cap(b)
+		if capB < size {
+			addDropped(capB)
+			continue
+		}
+		addReused(capB)
+		return b
 	}
 }
 
 //go:inline
-func put(b []byte, pool chan weakBuf) {
+func put(b []byte, pool *typedWeakPool) {
 	w := makeWeak(b)
-
-	select {
-	case pool <- w:
-	default:
+	if !pool.Put(w) {
 		addDropped(w.cap)
-		// just drop it
 	}
 }
 
