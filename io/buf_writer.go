@@ -13,12 +13,14 @@ import (
 
 // buffered output
 
-// BufferedWriter implements buffering for an [io.BufferedWriter] object.
+const defaultBufferSize = 4096
+
+// BufferedWriter implements buffering for an [io.Writer] object.
 // If an error occurs writing to a [BufferedWriter], no more data will be
 // accepted and all subsequent writes, and [BufferedWriter.Flush], will return the error.
 // After all data has been written, the client should call the
 // [BufferedWriter.Flush] method to guarantee all data has been forwarded to
-// the underlying [io.BufferedWriter].
+// the underlying [io.Writer].
 type BufferedWriter struct {
 	err error
 	buf []byte
@@ -35,28 +37,38 @@ func NewBufferedWriter(w io.Writer, size int) *BufferedWriter {
 	if ok && len(b.buf) >= size {
 		return b
 	}
+	if size <= 0 {
+		size = defaultBufferSize
+	}
 	return &BufferedWriter{
-		buf: bytesPool.GetSized(size),
+		buf: getBuffer(size),
 		wr:  w,
 	}
+}
+
+func getBuffer(size int) []byte {
+	buf := bytesPool.GetSized(size)
+	clear(buf)
+	return buf
 }
 
 // Size returns the size of the underlying buffer in bytes.
 func (b *BufferedWriter) Size() int { return len(b.buf) }
 
 func (b *BufferedWriter) Resize(size int) error {
-	err := b.Flush()
-	if err != nil {
+	if err := b.Flush(); err != nil {
 		return err
+	}
+	if size <= 0 {
+		size = defaultBufferSize
 	}
 	if cap(b.buf) >= size {
 		b.buf = b.buf[:size]
+		clear(b.buf)
 	} else {
 		b.release()
-		b.buf = bytesPool.GetSized(size)
+		b.buf = getBuffer(size)
 	}
-	b.err = nil
-	b.n = 0
 	return nil
 }
 
@@ -100,7 +112,7 @@ func (b *BufferedWriter) Available() int { return len(b.buf) - b.n }
 // passed to an immediately succeeding [BufferedWriter.Write] call.
 // The buffer is only valid until the next write operation on b.
 func (b *BufferedWriter) AvailableBuffer() []byte {
-	return b.buf[b.n:][:0]
+	return b.buf[b.n:b.n:len(b.buf)]
 }
 
 // Buffered returns the number of bytes that have been written into the current buffer.
@@ -215,13 +227,17 @@ func (b *BufferedWriter) WriteString(s string) (int, error) {
 }
 
 func (b *BufferedWriter) Close() error {
-	var flushErr error
-	var closerErr error
-	if b.n > 0 {
-		flushErr = b.Flush()
+	if b.buf == nil && b.err == io.ErrClosedPipe {
+		return io.ErrClosedPipe
 	}
+	flushErr := b.Flush()
+	wr := b.wr
 	b.release()
-	if closer, ok := b.wr.(io.Closer); ok {
+	b.n = 0
+	b.wr = nil
+	b.err = io.ErrClosedPipe
+	var closerErr error
+	if closer, ok := wr.(io.Closer); ok {
 		closerErr = closer.Close()
 	}
 	return errors.Join(flushErr, closerErr)
