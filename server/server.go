@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/pires/go-proxyproto"
 	h2proxy "github.com/pires/go-proxyproto/helper/http2"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
@@ -32,15 +31,15 @@ type ACL interface {
 }
 
 type Server struct {
-	Name          string
-	CertProvider  CertProvider
-	http          *http.Server
-	https         *http.Server
-	httpListener  net.Listener
-	httpsListener net.Listener
-	startTime     time.Time
-	acl           ACL
-	proxyProto    bool
+	Name                string
+	CertProvider        CertProvider
+	http                *http.Server
+	https               *http.Server
+	httpListener        net.Listener
+	httpsListener       net.Listener
+	startTime           time.Time
+	acl                 ACL
+	proxyProtocolPolicy ProxyProtocolPolicy
 
 	l zerolog.Logger
 }
@@ -56,7 +55,10 @@ type Options struct {
 	ACL              ACL
 	TLSConfigMutator func(*tls.Config) *tls.Config
 
+	// SupportProxyProtocol enables legacy optional PROXY-header detection.
+	// Deprecated: configure ProxyProtocolPolicy instead.
 	SupportProxyProtocol bool
+	ProxyProtocolPolicy  ProxyProtocolPolicy
 }
 
 type (
@@ -116,15 +118,15 @@ func NewServer(opt Options) (s *Server) {
 		}
 	}
 	return &Server{
-		Name:          opt.Name,
-		CertProvider:  opt.CertProvider,
-		http:          httpSer,
-		https:         httpsSer,
-		httpListener:  opt.HTTPListener,
-		httpsListener: opt.HTTPSListener,
-		l:             logger,
-		acl:           opt.ACL,
-		proxyProto:    opt.SupportProxyProtocol,
+		Name:                opt.Name,
+		CertProvider:        opt.CertProvider,
+		http:                httpSer,
+		https:               httpsSer,
+		httpListener:        opt.HTTPListener,
+		httpsListener:       opt.HTTPSListener,
+		l:                   logger,
+		acl:                 opt.ACL,
+		proxyProtocolPolicy: resolveProxyProtocolPolicy(opt.ProxyProtocolPolicy, opt.SupportProxyProtocol),
 	}
 }
 
@@ -142,7 +144,7 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 	s.startTime = time.Now()
 
 	if s.https != nil && http3Enabled {
-		if s.proxyProto {
+		if s.proxyProtocolPolicy.Enabled() {
 			// TODO: support proxy protocol for HTTP/3
 			s.l.Warn().Msg("HTTP/3 is enabled, but proxy protocol is yet not supported for HTTP/3")
 		} else {
@@ -153,7 +155,7 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 				TLSConfig: http3.ConfigureTLSConfig(s.https.TLSConfig),
 			}
 			subtask := parent.Subtask(taskName("http3"), true)
-			_, err := Start(subtask, h3, WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+			_, err := Start(subtask, h3, WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
 			if err != nil {
 				subtask.Finish(err)
 				return fmt.Errorf("failed to start HTTP/3 server: %w", err)
@@ -167,14 +169,14 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 	}
 
 	subtask := parent.Subtask(taskName("http"), true)
-	_, err := Start(subtask, s.http, WithListener(s.httpListener), WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	_, err := Start(subtask, s.http, WithListener(s.httpListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
 	if err != nil {
 		subtask.Finish(err)
 		return fmt.Errorf("failed to start HTTP server: %w", err)
 	}
 
 	subtask = parent.Subtask(taskName("https"), true)
-	_, err = Start(subtask, s.https, WithListener(s.httpsListener), WithProxyProtocolSupport(s.proxyProto), WithACL(s.acl), WithLogger(&s.l))
+	_, err = Start(subtask, s.https, WithListener(s.httpsListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
 	if err != nil {
 		subtask.Finish(err)
 		return fmt.Errorf("failed to start HTTPS server: %w", err)
@@ -183,11 +185,12 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 }
 
 type ServerStartOptions struct {
-	tcpWrappers []func(l net.Listener) net.Listener
-	udpWrappers []func(l net.PacketConn) net.PacketConn
-	logger      *zerolog.Logger
-	proxyProto  bool
-	listener    net.Listener
+	tcpWrappers         []func(l net.Listener) net.Listener
+	udpWrappers         []func(l net.PacketConn) net.PacketConn
+	logger              *zerolog.Logger
+	proxyProto          bool
+	proxyProtocolPolicy ProxyProtocolPolicy
+	listener            net.Listener
 }
 
 type ServerStartOption func(opts *ServerStartOptions)
@@ -226,6 +229,12 @@ func WithProxyProtocolSupport(value bool) ServerStartOption {
 	}
 }
 
+func WithProxyProtocolPolicy(policy ProxyProtocolPolicy) ServerStartOption {
+	return func(opts *ServerStartOptions) {
+		opts.proxyProtocolPolicy = policy
+	}
+}
+
 func WithListener(listener net.Listener) ServerStartOption {
 	return func(opts *ServerStartOptions) {
 		opts.listener = listener
@@ -250,6 +259,8 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 	}
 
 	proto := proto(srv)
+	proxyProtocolPolicy := resolveProxyProtocolPolicy(opts.proxyProtocolPolicy, opts.proxyProto)
+	proxyProtocolEnabled := proxyProtocolPolicy.Enabled()
 
 	var lc net.ListenConfig
 	var serveFunc func() error
@@ -267,8 +278,8 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 			}
 		}
 		port = l.Addr().(*net.TCPAddr).Port
-		if opts.proxyProto {
-			l = &proxyproto.Listener{Listener: l}
+		if proxyProtocolEnabled {
+			l = proxyProtocolPolicy.Wrap(l)
 		}
 		if srv.TLSConfig != nil {
 			l = tls.NewListener(l, srv.TLSConfig)
@@ -276,7 +287,7 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 		for _, wrapper := range opts.tcpWrappers {
 			l = wrapper(l)
 		}
-		if opts.proxyProto {
+		if proxyProtocolEnabled {
 			serveFunc = getServeFunc(l, h2proxy.NewServer(srv, nil).Serve)
 		} else {
 			serveFunc = getServeFunc(l, srv.Serve)
@@ -317,6 +328,16 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 		task.Finish(err)
 	}()
 	return port, nil
+}
+
+func resolveProxyProtocolPolicy(policy ProxyProtocolPolicy, legacy bool) ProxyProtocolPolicy {
+	if policy.configured {
+		return policy
+	}
+	if legacy {
+		return NewLegacyProxyProtocolPolicy()
+	}
+	return policy
 }
 
 func stop[Server httpServer](srv Server, l io.Closer, proto string, logger *zerolog.Logger) {

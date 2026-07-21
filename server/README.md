@@ -23,7 +23,8 @@ type Options struct {
     CertProvider CertProvider
     Handler      http.Handler
     ACL          ACL
-    SupportProxyProtocol bool
+    SupportProxyProtocol bool // deprecated legacy mode
+    ProxyProtocolPolicy ProxyProtocolPolicy
 }
 
 type CertProvider interface {
@@ -59,19 +60,33 @@ func WithUDPWrappers(wrappers ...UDPWrapper) ServerStartOption
 func WithLogger(logger *zerolog.Logger) ServerStartOption
 func WithACL(acl ACL) ServerStartOption
 func WithProxyProtocolSupport(value bool) ServerStartOption
+func WithProxyProtocolPolicy(policy ProxyProtocolPolicy) ServerStartOption
+
+func NewProxyProtocolPolicy(config ProxyProtocolConfig) (ProxyProtocolPolicy, error)
+func NewLegacyProxyProtocolPolicy() ProxyProtocolPolicy
+func (p ProxyProtocolPolicy) Enabled() bool
+func (p ProxyProtocolPolicy) Wrap(listener net.Listener) net.Listener
 ```
 
 ## Usage
 
 ```go
-server := server.NewServer(server.Options{
+policy, err := server.NewProxyProtocolPolicy(server.ProxyProtocolConfig{
+    Mode:           server.ProxyProtocolModeRequired,
+    TrustedProxies: []string{"172.18.0.10", "10.0.0.0/8"},
+})
+if err != nil {
+    return err
+}
+httpServer := server.NewServer(server.Options{
     Name:      "main",
     HTTPAddr:  ":8080",
     HTTPSAddr: ":8443",
     Handler:   myHandler,
     CertProvider: myCertProvider,
+    ProxyProtocolPolicy: policy,
 })
-server.Start(parent, true)
+httpServer.Start(parent, true)
 ```
 
 ## Features
@@ -79,6 +94,7 @@ server.Start(parent, true)
 - HTTP/HTTPS/HTTP3 support
 - TLS with custom certificate providers
 - Proxy protocol support
+- Required and mixed trusted-source PROXY protocol policies
 - ACL integration
 - Graceful shutdown
 - Task-based lifetime management
