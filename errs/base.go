@@ -57,10 +57,12 @@ func (err baseError) Error() string {
 func (err baseError) MarshalJSON() ([]byte, error) {
 	//nolint:errorlint
 	switch err := err.Err.(type) {
-	case Error, *withSubject:
+	case *withSubject:
 		return strutils.MarshalJSON(err)
 	case json.Marshaler:
 		return err.MarshalJSON()
+	case Error:
+		return strutils.MarshalJSON(err.Error())
 	case interface{ MarshalText() ([]byte, error) }:
 		return err.MarshalText()
 	default:

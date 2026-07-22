@@ -1,6 +1,7 @@
 package gperr
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -82,7 +83,10 @@ func wrap(err error) Error {
 	//nolint:errorlint
 	switch err := err.(type) {
 	case Error:
-		return err
+		if _, ok := err.(json.Marshaler); ok {
+			return err
+		}
+		return baseError{err}
 	}
 	switch reflect.TypeOf(err) {
 	case errorStringType, wrapErrorType, wrapErrorsType:

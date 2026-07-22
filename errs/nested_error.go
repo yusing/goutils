@@ -3,6 +3,8 @@ package gperr
 import (
 	"errors"
 	"fmt"
+
+	strutils "github.com/yusing/goutils/strings"
 )
 
 //nolint:recvcheck
@@ -101,6 +103,22 @@ func (err *nestedError) Plain() []byte {
 
 func (err *nestedError) Markdown() []byte {
 	return err.fmtError(appendLineMd)
+}
+
+func (err *nestedError) MarshalJSON() ([]byte, error) {
+	type nestedErrorJSON struct {
+		Err    Error   `json:"err,omitempty"`
+		Extras []Error `json:"extras,omitempty"`
+	}
+
+	jsonErr := nestedErrorJSON{Err: Wrap(err.Err)}
+	if len(err.Extras) > 0 {
+		jsonErr.Extras = make([]Error, len(err.Extras))
+		for i, extra := range err.Extras {
+			jsonErr.Extras[i] = Wrap(extra)
+		}
+	}
+	return strutils.MarshalJSON(jsonErr)
 }
 
 func appendLine(buf []byte, err error, level int, prefix []byte, format func(err error) []byte) []byte {

@@ -3,6 +3,8 @@ package gperr
 import (
 	"fmt"
 	"unicode"
+
+	strutils "github.com/yusing/goutils/strings"
 )
 
 type MultilineError struct {
@@ -46,6 +48,10 @@ func (m *MultilineError) Plain() []byte {
 		return nil
 	}
 	return m.currentParent.Plain()
+}
+
+func (m *MultilineError) MarshalJSON() ([]byte, error) {
+	return strutils.MarshalJSON(m.currentParent)
 }
 
 func (m *MultilineError) Subject(subject string) Error {
