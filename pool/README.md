@@ -82,10 +82,19 @@ Allows objects to express deterministic replacement preference when multiple obj
 #### New
 
 ```go
-func New[T Object](name string) *Pool[T]
+func New[T Object](name, eventKey string) *Pool[T]
 ```
 
 Creates a new pool with the given name. The name is used as a prefix in log messages.
+
+#### SetEventHistory
+
+```go
+func (p *Pool[T]) SetEventHistory(history *events.History)
+```
+
+Installs the owning runtime's event sink. Add/remove events are emitted only to
+that history; the pool does not write to a mutable process-global collector.
 
 **Concurrency:** Safe to call during initialization.
 
