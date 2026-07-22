@@ -25,7 +25,11 @@ func Blocked(r *http.Request, source, reason string) {
 	singleFlightKey := remoteIP + "|" + r.Host
 
 	_, _, _ = singleFlight.Do(singleFlightKey, func() (any, error) {
-		events.Global.Add(events.NewEvent(events.LevelInfo, "http_event", "blocked", map[string]any{
+		history := events.FromCtx(r.Context())
+		if history == nil {
+			return nil, nil
+		}
+		history.Add(events.NewEvent(events.LevelInfo, "http_event", "blocked", map[string]any{
 			"remote_ip":   remoteIP,
 			"request_url": baseURL,
 			"source":      source,

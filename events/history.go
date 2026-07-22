@@ -29,8 +29,6 @@ type listener struct {
 	mu sync.Mutex
 }
 
-var Global = NewHistory()
-
 func NewHistory() *History {
 	return &History{
 		listeners: make(map[*listener]struct{}),
