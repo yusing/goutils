@@ -32,6 +32,7 @@ type Manager struct {
 	err              synk.Value[error]
 
 	writeLock sync.Mutex
+	errOnce   sync.Once
 	closeOnce sync.Once
 }
 
@@ -367,10 +368,12 @@ func (cm *Manager) readRoutine() {
 	}
 }
 
-// setErrIfNil sets the error if the error is nil.
-// so that only the first error is set.
+// setErrIfNil preserves the first error reported by concurrent connection routines.
 func (cm *Manager) setErrIfNil(err error) {
-	if err != nil {
-		cm.err.CompareAndSwap(nil, err)
+	if err == nil {
+		return
 	}
+	cm.errOnce.Do(func() {
+		cm.err.Store(err)
+	})
 }

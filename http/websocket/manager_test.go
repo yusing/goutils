@@ -1,8 +1,11 @@
 package websocket
 
 import (
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 )
 
@@ -35,5 +38,32 @@ func TestWebsocketUpgradeResponseHeaderWithoutCSRFSubprotocol(t *testing.T) {
 
 	if header := websocketUpgradeResponseHeader(req); header != nil {
 		t.Fatalf("websocketUpgradeResponseHeader() = %v, want nil", header)
+	}
+}
+
+func TestManagerSetErrIfNilKeepsFirstConcreteError(t *testing.T) {
+	cm := new(Manager)
+	first := errors.New("first error")
+	second := fmt.Errorf("second error: %w", errors.New("cause"))
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, err := range []error{first, second} {
+		wg.Go(func() {
+			<-start
+			cm.setErrIfNil(err)
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	got := cm.err.Load()
+	if !errors.Is(got, first) && !errors.Is(got, second) {
+		t.Fatalf("manager error = %v, want one of the submitted errors", got)
+	}
+
+	cm.setErrIfNil(errors.New("later error"))
+	if cm.err.Load() != got {
+		t.Fatalf("manager error changed from %v to %v", got, cm.err.Load())
 	}
 }
