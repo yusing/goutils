@@ -29,6 +29,8 @@ var (
 	HasError       = require.Error
 	True           = require.True
 	False          = require.False
+	Empty          = require.Empty
+	NotEmpty       = require.NotEmpty
 	Nil            = require.Nil
 	NotNil         = require.NotNil
 	ErrorContains  = require.ErrorContains
