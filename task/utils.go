@@ -125,6 +125,7 @@ func WaitExit(shutdownTimeout int) {
 func gracefulShutdown(timeout time.Duration) error {
 	root.Finish(ErrProgramExiting)
 	if !root.waitFinish(timeout) {
+		root.reportStucked()
 		return context.DeadlineExceeded
 	}
 	return nil
