@@ -168,18 +168,24 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 		}
 	}
 
-	subtask := parent.Subtask(taskName("http"), true)
-	_, err := Start(subtask, s.http, WithListener(s.httpListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
-	if err != nil {
-		subtask.Finish(err)
-		return fmt.Errorf("failed to start HTTP server: %w", err)
+	// Only create proto tasks for servers that exist. A needFinish task with no
+	// Serve goroutine never Finishes and pins parent shutdown.
+	if s.http != nil {
+		subtask := parent.Subtask(taskName("http"), true)
+		_, err := Start(subtask, s.http, WithListener(s.httpListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
+		if err != nil {
+			subtask.Finish(err)
+			return fmt.Errorf("failed to start HTTP server: %w", err)
+		}
 	}
 
-	subtask = parent.Subtask(taskName("https"), true)
-	_, err = Start(subtask, s.https, WithListener(s.httpsListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
-	if err != nil {
-		subtask.Finish(err)
-		return fmt.Errorf("failed to start HTTPS server: %w", err)
+	if s.https != nil {
+		subtask := parent.Subtask(taskName("https"), true)
+		_, err := Start(subtask, s.https, WithListener(s.httpsListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
+		if err != nil {
+			subtask.Finish(err)
+			return fmt.Errorf("failed to start HTTPS server: %w", err)
+		}
 	}
 	return nil
 }
@@ -243,6 +249,7 @@ func WithListener(listener net.Listener) ServerStartOption {
 
 func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStartOption) (port int, err error) {
 	if srv == nil {
+		task.Finish("server not configured")
 		return port, nil
 	}
 
