@@ -345,7 +345,10 @@ func stop[Server httpServer](srv Server, l io.Closer, proto string, logger *zero
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(task.RootContext(), 1*time.Second)
+	// This runs as an OnCancel callback, so on program exit the root context is
+	// already canceled. Strip the cancellation, otherwise Shutdown returns at once
+	// and in-flight responses lose their connection instead of being flushed.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(task.RootContext()), 1*time.Second)
 	defer cancel()
 
 	// Close the listener first so socket/port is released as early as possible
