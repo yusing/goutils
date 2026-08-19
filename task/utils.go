@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -96,6 +97,14 @@ func OnProgramExit(about string, fn func()) {
 	root.OnCancel(about, fn)
 }
 
+// shutdownDeadline holds the instant the program-wide shutdown budget expires,
+// as unix nanoseconds, or 0 while the program is not shutting down.
+var shutdownDeadline atomic.Int64
+
+// reportGrace is how much longer the root waits than the tasks below it, so
+// every nested wait has given up before the root reports what is left.
+const reportGrace = 100 * time.Millisecond
+
 // WaitExit waits for a signal to shutdown the program, and then waits for all tasks to finish, up to the given timeout.
 //
 // If the timeout is exceeded, it prints a list of all tasks that were
@@ -110,11 +119,9 @@ func WaitExit(shutdownTimeout int) {
 	// wait for signal
 	<-sig
 
-	// gracefully shutdown
+	// gracefully shutdown; gracefulShutdown already reported what was left
 	log.Info().Msg("shutting down")
-	if err := gracefulShutdown(time.Second * time.Duration(shutdownTimeout)); err != nil {
-		root.reportStucked()
-	}
+	_ = gracefulShutdown(time.Second * time.Duration(shutdownTimeout))
 }
 
 // gracefulShutdown waits for all tasks to finish, up to the given timeout.
@@ -123,10 +130,13 @@ func WaitExit(shutdownTimeout int) {
 // still running when the timeout was reached, and their current tree
 // of subtasks.
 func gracefulShutdown(timeout time.Duration) error {
+	shutdownDeadline.Store(time.Now().Add(timeout).UnixNano())
+	defer shutdownDeadline.Store(0)
+
 	root.Finish(ErrProgramExiting)
-	if !root.waitFinish(timeout) {
-		root.reportStucked()
-		return context.DeadlineExceeded
+	if err := root.waitFinish(timeout + reportGrace); err != nil {
+		root.reportStucked(err)
+		return err
 	}
 	return nil
 }

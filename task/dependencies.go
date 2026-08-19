@@ -41,6 +41,15 @@ func (w *Dependencies[T]) Delete(ele T) {
 	}
 }
 
+// Len returns the number of dependencies that have not finished yet.
+// A nil Dependencies has none.
+func (w *Dependencies[T]) Len() int {
+	if w == nil {
+		return 0
+	}
+	return int(w.count.Load())
+}
+
 func (w *Dependencies[T]) Wait(ctx context.Context) error {
 	done := w.done.Load()
 	if done == nil {
