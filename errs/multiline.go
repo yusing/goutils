@@ -2,6 +2,7 @@ package gperr
 
 import (
 	"fmt"
+	"slices"
 	"unicode"
 
 	strutils "github.com/yusing/goutils/strings"
@@ -206,8 +207,8 @@ func (m *MultilineError) ensureNested(err Error) *nestedError {
 
 func (m *MultilineError) findParentForIndent(indent int) Error {
 	// Find the parent with the closest smaller indent
-	for i := len(m.indentStack) - 1; i >= 0; i-- {
-		if m.indentStack[i] < indent {
+	for i, v := range slices.Backward(m.indentStack) {
+		if v < indent {
 			return m.parentStack[i]
 		}
 	}
@@ -216,8 +217,8 @@ func (m *MultilineError) findParentForIndent(indent int) Error {
 
 func (m *MultilineError) updateStackForIndent(indent int) {
 	// Remove all entries with indent >= current indent
-	for i := len(m.indentStack) - 1; i >= 0; i-- {
-		if m.indentStack[i] >= indent {
+	for i, v := range slices.Backward(m.indentStack) {
+		if v >= indent {
 			m.parentStack = m.parentStack[:i]
 			m.indentStack = m.indentStack[:i]
 		} else {

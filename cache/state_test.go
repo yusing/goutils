@@ -249,17 +249,13 @@ func TestCachedFuncState_BackoffStopStopsRetries(t *testing.T) {
 	testErr := errors.New("persistent error")
 	var callCount atomic.Int32
 	state := &CachedFuncState[string]{
-		CachedFuncBuilder: CachedFuncBuilder[string]{
-			CachedFuncConfig: CachedFuncConfig{
-				retries: 3,
-				backoffFactory: func() backoff.BackOff {
-					return &stopBackOff{}
-				},
-			},
-			fn: func(ctx context.Context) (string, error) {
-				callCount.Add(1)
-				return "", testErr
-			},
+		retries: 3,
+		backoffFactory: func() backoff.BackOff {
+			return &stopBackOff{}
+		},
+		fn: func(ctx context.Context) (string, error) {
+			callCount.Add(1)
+			return "", testErr
 		},
 	}
 
@@ -500,12 +496,8 @@ func TestCachedFuncState_ExpirationLogic(t *testing.T) {
 	}
 
 	state := &CachedFuncState[string]{
-		CachedFuncBuilder: CachedFuncBuilder[string]{
-			CachedFuncConfig: CachedFuncConfig{
-				ttl: 100 * time.Millisecond,
-			},
-			fn: fn,
-		},
+		ttl: 100 * time.Millisecond,
+		fn:  fn,
 	}
 
 	// Test checkExpired when never set
@@ -521,9 +513,7 @@ func TestCachedFuncState_ExpirationLogic(t *testing.T) {
 
 	// Test with zero TTL (should never expire)
 	stateZeroTTL := &CachedFuncState[string]{
-		CachedFuncBuilder: CachedFuncBuilder[string]{
-			fn: fn,
-		},
+		fn: fn,
 	}
 	stateZeroTTL.setResult("test", nil)
 	assert.False(t, stateZeroTTL.checkExpired())

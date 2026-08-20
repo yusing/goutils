@@ -173,9 +173,7 @@ func benchmarkKeyedParallel(b *testing.B, cfg benchmarkKeyedConfig) {
 
 func newBenchmarkCleanupState(maxEntries, overflow int) *CachedContextKeyFuncState[int, int] {
 	state := &CachedContextKeyFuncState[int, int]{
-		CachedKeyFuncBuilder: CachedKeyFuncBuilder[int, int]{
-			maxEntries: maxEntries,
-		},
+		maxEntries: maxEntries,
 		entries:    xsync.NewMap[int, *CacheEntry[int]](),
 		accessLog:  make([]cleanupCandidate[int], 0, initialAccessLogCap(maxEntries)),
 		cleanupLog: make([]cleanupCandidate[int], 0, initialAccessLogCap(maxEntries)),

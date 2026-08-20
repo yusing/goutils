@@ -261,17 +261,13 @@ func TestCachedContextKeyFuncState_BackoffStopStopsRetries(t *testing.T) {
 	testErr := errors.New("persistent error")
 	var callCount atomic.Int32
 	state := &CachedContextKeyFuncState[string, int]{
-		CachedKeyFuncBuilder: CachedKeyFuncBuilder[string, int]{
-			CachedFuncConfig: CachedFuncConfig{
-				retries: 3,
-				backoffFactory: func() backoff.BackOff {
-					return &stopBackOff{}
-				},
-			},
-			fn: func(ctx context.Context, key int) (string, error) {
-				callCount.Add(1)
-				return "", testErr
-			},
+		retries: 3,
+		backoffFactory: func() backoff.BackOff {
+			return &stopBackOff{}
+		},
+		fn: func(ctx context.Context, key int) (string, error) {
+			callCount.Add(1)
+			return "", testErr
 		},
 	}
 
@@ -286,12 +282,10 @@ func TestCachedContextKeyFuncState_TTLWaitsForPublishedInFlightEntry(t *testing.
 
 	var calls atomic.Int32
 	state := &CachedContextKeyFuncState[int, int]{
-		CachedKeyFuncBuilder: CachedKeyFuncBuilder[int, int]{
-			CachedFuncConfig: CachedFuncConfig{ttl: time.Second},
-			fn: func(ctx context.Context, key int) (int, error) {
-				calls.Add(1)
-				return 99, nil
-			},
+		ttl: time.Second,
+		fn: func(ctx context.Context, key int) (int, error) {
+			calls.Add(1)
+			return 99, nil
 		},
 		entries: xsync.NewMap[int, *CacheEntry[int]](),
 	}
@@ -649,12 +643,8 @@ func TestCachedContextKeyFuncState_ExpirationLogic(t *testing.T) {
 	}
 
 	state := &CachedContextKeyFuncState[string, int]{
-		CachedKeyFuncBuilder: CachedKeyFuncBuilder[string, int]{
-			CachedFuncConfig: CachedFuncConfig{
-				ttl: 100 * time.Millisecond,
-			},
-			fn: fn,
-		},
+		ttl:     100 * time.Millisecond,
+		fn:      fn,
 		entries: xsync.NewMap[int, *CacheEntry[string]](),
 	}
 
@@ -674,12 +664,8 @@ func TestCachedContextKeyFuncState_ExpirationLogic(t *testing.T) {
 
 	// Test with zero TTL (should never expire)
 	stateZeroTTL := &CachedContextKeyFuncState[string, int]{
-		CachedKeyFuncBuilder: CachedKeyFuncBuilder[string, int]{
-			CachedFuncConfig: CachedFuncConfig{
-				ttl: 0,
-			},
-			fn: fn,
-		},
+		ttl:     0,
+		fn:      fn,
 		entries: xsync.NewMap[int, *CacheEntry[string]](),
 	}
 
@@ -721,11 +707,9 @@ func TestCachedContextKeyFuncState_Cleanup(t *testing.T) {
 
 func TestCachedContextKeyFuncState_CleanupTrimsOverflowToMostRecentEntries(t *testing.T) {
 	state := &CachedContextKeyFuncState[string, int]{
-		CachedKeyFuncBuilder: CachedKeyFuncBuilder[string, int]{
-			maxEntries: 2,
-		},
-		entries:   xsync.NewMap[int, *CacheEntry[string]](),
-		accessLog: make([]cleanupCandidate[int], 0, 8),
+		maxEntries: 2,
+		entries:    xsync.NewMap[int, *CacheEntry[string]](),
+		accessLog:  make([]cleanupCandidate[int], 0, 8),
 	}
 
 	for _, key := range []int{1, 2, 3, 2} {
@@ -779,9 +763,7 @@ func TestCachedContextKeyFuncState_CleanupConcurrentContentionStress(t *testing.
 	)
 
 	state := &CachedContextKeyFuncState[int, int]{
-		CachedKeyFuncBuilder: CachedKeyFuncBuilder[int, int]{
-			maxEntries: maxEntries,
-		},
+		maxEntries: maxEntries,
 		entries:    xsync.NewMap[int, *CacheEntry[int]](),
 		accessLog:  make([]cleanupCandidate[int], 0, initialAccessLogCap(maxEntries)),
 		cleanupLog: make([]cleanupCandidate[int], 0, initialAccessLogCap(maxEntries)),
@@ -857,9 +839,7 @@ func TestCachedContextKeyFuncState_CleanupConcurrentTouchStress(t *testing.T) {
 
 	for attempt := range attempts {
 		state := &CachedContextKeyFuncState[int, int]{
-			CachedKeyFuncBuilder: CachedKeyFuncBuilder[int, int]{
-				maxEntries: 1,
-			},
+			maxEntries: 1,
 			entries:    xsync.NewMap[int, *CacheEntry[int]](),
 			accessLog:  make([]cleanupCandidate[int], 0, 32),
 			cleanupLog: make([]cleanupCandidate[int], 0, 32),
