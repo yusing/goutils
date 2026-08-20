@@ -17,6 +17,8 @@ classDiagram
         +Done() <-chan struct#123;#125;
         +WriteData(typ int, data []byte, timeout time.Duration) error
         +WriteJSON(data any, timeout time.Duration) error
+        +CopyJSONStream(r io.Reader) error
+        +CopyTextLines(r io.Reader) error
         +ReadJSON(out any, timeout time.Duration) error
         +ReadBinary(timeout time.Duration) ([]byte, error)
         +PeriodicWrite(interval time.Duration, getData func() (any, error), deduplicate ...DeduplicateFunc) error
@@ -80,8 +82,9 @@ const (
 
 ```go
 var (
-    ErrReadTimeout  = errors.New("read timeout")
-    ErrWriteTimeout = errors.New("write timeout")
+    ErrReadTimeout             = errors.New("read timeout")
+    ErrWriteTimeout            = errors.New("write timeout")
+    ErrTextBufferBudgetExceeded = errors.New("websocket text buffer budget exceeded")
 )
 ```
 
@@ -154,13 +157,37 @@ func (m *Manager) WriteJSON(data any, timeout time.Duration) error
 
 JSON-marshals data and writes it as a TextMessage.
 
+#### CopyJSONStream
+
+```go
+func (m *Manager) CopyJSONStream(r io.Reader) error
+```
+
+Reads sequential JSON values from a byte stream and writes each complete value as a separate
+TextMessage. Input read boundaries do not become WebSocket message boundaries.
+
+#### CopyTextLines
+
+```go
+func (m *Manager) CopyTextLines(r io.Reader) error
+```
+
+Reads newline-delimited text records from a byte stream and writes each line as a separate
+TextMessage. A final record without a newline is sent when the input reaches EOF. Oversized
+records are reconstructed in memory under one shared 64 MiB buffered-payload budget so an
+incomplete record does not block WebSocket heartbeats or grow without bound. Allocator capacity
+may be higher than the retained payload size. The method returns `ErrTextBufferBudgetExceeded`
+when active records exhaust that local budget.
+
 #### NewWriter
 
 ```go
 func (m *Manager) NewWriter(msgType int) io.Writer
 ```
 
-Creates an io.Writer for streaming messages to the connection.
+Creates an io.Writer that sends each `Write` call as a separate WebSocket message. Use
+`CopyJSONStream` instead when the input is a JSON byte stream whose reads or writes may split or
+combine values.
 
 ### Reading Messages
 
