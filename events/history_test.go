@@ -16,14 +16,22 @@ import (
 )
 
 type syncBuffer struct {
-	mu  sync.Mutex
-	buf []byte
+	mu     sync.Mutex
+	buf    []byte
+	writes [][]byte
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (write writerFunc) Write(p []byte) (int, error) {
+	return write(p)
 }
 
 func (b *syncBuffer) Write(p []byte) (n int, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.buf = append(b.buf, p...)
+	b.writes = append(b.writes, bytes.Clone(p))
 	return len(p), nil
 }
 
@@ -32,6 +40,16 @@ func (b *syncBuffer) Bytes() []byte {
 	defer b.mu.Unlock()
 	out := make([]byte, len(b.buf))
 	copy(out, b.buf)
+	return out
+}
+
+func (b *syncBuffer) Writes() [][]byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([][]byte, len(b.writes))
+	for i, write := range b.writes {
+		out[i] = bytes.Clone(write)
+	}
 	return out
 }
 
@@ -135,6 +153,12 @@ func TestListenJSONNoDuplicateAtBoundary(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 
 	events := decodeEvents(t, w.Bytes())
+	writes := w.Writes()
+	require.Len(t, writes, len(events))
+	for _, write := range writes {
+		require.Truef(t, json.Valid(write), "write is not standalone JSON: %q", write)
+	}
+
 	actionCount := make(map[string]int, len(events))
 	for _, event := range events {
 		actionCount[event.Action]++
@@ -142,6 +166,42 @@ func TestListenJSONNoDuplicateAtBoundary(t *testing.T) {
 	require.Equal(t, 1, actionCount["init-1"])
 	require.Equal(t, 1, actionCount["init-2"])
 	require.Equal(t, 1, actionCount["live-1"])
+}
+
+func TestListenJSONReturnsWriteFailure(t *testing.T) {
+	t.Parallel()
+
+	h := NewHistory()
+	h.Add(NewEvent(LevelInfo, "test", "init", nil))
+
+	writeErr := errors.New("write failed")
+	tests := []struct {
+		name    string
+		write   writerFunc
+		wantErr error
+	}{
+		{
+			name: "writer error",
+			write: func([]byte) (int, error) {
+				return 0, writeErr
+			},
+			wantErr: writeErr,
+		},
+		{
+			name: "short write",
+			write: func(p []byte) (int, error) {
+				return len(p) - 1, nil
+			},
+			wantErr: io.ErrShortWrite,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := h.ListenJSON(t.Context(), tt.write)
+			require.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }
 
 func TestSnapshotAndListenBoundaryDeliveredOnceUnderContention(t *testing.T) {

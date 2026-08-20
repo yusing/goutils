@@ -174,18 +174,17 @@ func (h *History) snapshotLocked() []Event {
 // ListenJSON listens for events and writes them to the writer in JSON format.
 //
 // It does send the current events to the writer.
+// Each event is passed to w in one Write call so record-oriented writers preserve event boundaries.
 func (h *History) ListenJSON(ctx context.Context, w io.Writer) error {
 	current, ch, cancel := h.SnapshotAndListen()
 	defer cancel()
-
-	enc := strutils.NewJSONEncoder(w)
 
 	for _, event := range current {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
-			if err := enc.Encode(event); err != nil {
+			if err := writeJSONEvent(w, event); err != nil {
 				return err
 			}
 		}
@@ -196,9 +195,26 @@ func (h *History) ListenJSON(ctx context.Context, w io.Writer) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case event := <-ch:
-			if err := enc.Encode(event); err != nil {
+			if err := writeJSONEvent(w, event); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+func writeJSONEvent(w io.Writer, event Event) error {
+	data, err := strutils.MarshalJSON(event)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+
+	n, err := w.Write(data)
+	if err != nil {
+		return err
+	}
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
