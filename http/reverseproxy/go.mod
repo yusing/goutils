@@ -1,6 +1,6 @@
 module github.com/yusing/goutils/http/reverseproxy
 
-go 1.26.5
+go 1.27.0
 
 replace github.com/yusing/goutils => ../..
 

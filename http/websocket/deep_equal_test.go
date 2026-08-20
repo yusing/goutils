@@ -25,6 +25,12 @@ var (
 )
 
 func TestDeepEqualScalars(t *testing.T) {
+	type (
+		namedBool bool
+		namedInt  int64
+		namedUint uint64
+	)
+
 	tests := []struct {
 		name string
 		x    any
@@ -36,6 +42,12 @@ func TestDeepEqualScalars(t *testing.T) {
 		{name: "equal ints", x: 42, y: 42, want: true},
 		{name: "different ints", x: 42, y: 43, want: false},
 		{name: "different numeric types", x: int64(42), y: uint64(42), want: false},
+		{name: "equal named bools", x: namedBool(true), y: namedBool(true), want: true},
+		{name: "different named bools", x: namedBool(true), y: namedBool(false), want: false},
+		{name: "equal named ints", x: namedInt(-42), y: namedInt(-42), want: true},
+		{name: "different named ints", x: namedInt(-42), y: namedInt(42), want: false},
+		{name: "equal named uints", x: namedUint(42), y: namedUint(42), want: true},
+		{name: "different named uints", x: namedUint(42), y: namedUint(43), want: false},
 		{name: "nan equals nan", x: math.NaN(), y: math.NaN(), want: true},
 		{name: "nil equals nil", x: nil, y: nil, want: true},
 		{name: "nil differs from zero", x: nil, y: 0, want: false},
