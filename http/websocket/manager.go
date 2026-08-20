@@ -215,7 +215,7 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 	}
 }
 
-// WriteJSON writes a JSON message to the connection using the configured JSON marshaler (see goutils/strings serialization).
+// WriteJSON writes a JSON message to the connection using encoding/json/v2 via goutils/strings.
 // If the connection is closed, the error is returned.
 // If the write timeout is reached, ErrWriteTimeout is returned.
 func (cm *Manager) WriteJSON(data any, timeout time.Duration) error {
@@ -258,7 +258,7 @@ func (cm *Manager) ReadCh() <-chan []byte {
 	return cm.readCh
 }
 
-// ReadJSON reads a JSON message from the connection and unmarshals it with the configured JSON unmarshaler (see goutils/strings serialization).
+// ReadJSON reads a JSON message from the connection and unmarshals it with encoding/json/v2 via goutils/strings.
 // If the connection is closed, the error is returned.
 // If the message fails to unmarshal, the error is returned.
 // If the read timeout is reached, ErrReadTimeout is returned.

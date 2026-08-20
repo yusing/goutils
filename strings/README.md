@@ -42,6 +42,23 @@ func AppendTimeWithReference(t, ref time.Time, buf []byte) []byte
 func Pluralize(n int64) string
 ```
 
+### JSON
+
+JSON helpers use `encoding/json/v2`. `time.Duration` is encoded as a nanosecond number.
+
+```go
+func MarshalJSON(value any) ([]byte, error)
+func UnmarshalJSON(data []byte, value any) error
+func MarshalJSONIndent(value any, prefix, indent string) ([]byte, error)
+func MarshalString(value any) (string, error)
+func UnmarshalFromString(data string, value any) error
+func ValidJSON(b []byte) bool
+func ValidJSONString(s string) bool
+func NewJSONEncoder(w io.Writer) Encoder
+func NewJSONDecoder(r io.Reader) Decoder
+```
+
+
 ## Usage
 
 ```go
