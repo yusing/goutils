@@ -64,7 +64,11 @@ func (err baseError) MarshalJSON() ([]byte, error) {
 	case Error:
 		return strutils.MarshalJSON(err.Error())
 	case interface{ MarshalText() ([]byte, error) }:
-		return err.MarshalText()
+		text, marshalErr := err.MarshalText()
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		return strutils.MarshalJSON(string(text))
 	default:
 		return strutils.MarshalJSON(err.Error())
 	}

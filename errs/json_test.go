@@ -37,6 +37,17 @@ type futureJSONError struct{}
 
 func (futureJSONError) Error() string { return "future error" }
 
+type textMarshalingError struct {
+	text string
+	err  error
+}
+
+func (err textMarshalingError) Error() string { return "text marshaling error" }
+
+func (err textMarshalingError) MarshalText() ([]byte, error) {
+	return []byte(err.text), err.err
+}
+
 // legacyError proves that implementing Error does not require opting into a
 // serialization interface. Package wrappers still provide readable JSON at
 // the presentation boundary.
@@ -90,6 +101,33 @@ func TestErrorJSONContract(t *testing.T) {
 		encoded, err := strutils.MarshalJSON(Wrap(legacyError{}))
 		require.NoError(t, err)
 		require.JSONEq(t, `"legacy error"`, string(encoded))
+	})
+
+	t.Run("text marshaling errors are encoded as JSON strings", func(t *testing.T) {
+		errs := NewBuilder("middleware errors")
+		errs.Add(New("unknown field").With(DoYouMean("Header")))
+
+		encoded, err := strutils.MarshalJSON(errs.Error())
+		require.NoError(t, err)
+		require.JSONEq(t, `{
+			"err": "middleware errors",
+			"extras": [{
+				"err": "unknown field",
+				"extras": ["Do you mean Header?"]
+			}]
+		}`, string(encoded))
+	})
+
+	t.Run("JSON-looking marshaled text remains text", func(t *testing.T) {
+		encoded, err := strutils.MarshalJSON(Wrap(textMarshalingError{text: "null"}))
+		require.NoError(t, err)
+		require.JSONEq(t, `"null"`, string(encoded))
+	})
+
+	t.Run("text marshaling errors are propagated", func(t *testing.T) {
+		sentinel := errors.New("text marshal failed")
+		_, err := strutils.MarshalJSON(Wrap(textMarshalingError{err: sentinel}))
+		require.ErrorIs(t, err, sentinel)
 	})
 
 	t.Run("joined errors retain every identity and readable diagnostic", func(t *testing.T) {
