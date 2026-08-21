@@ -9,13 +9,16 @@ import (
 	_ "unsafe"
 )
 
-//go:linkname errStreamClosed golang.org/x/net/http2.errStreamClosed
+// Go 1.27's x/net/http2 delegates server and transport behavior to the
+// standard library, so expected connection-close errors originate there.
+//
+//go:linkname errStreamClosed net/http/internal/http2.errStreamClosed
 var errStreamClosed error
 
-//go:linkname errClientDisconnected golang.org/x/net/http2.errClientDisconnected
+//go:linkname errClientDisconnected net/http/internal/http2.errClientDisconnected
 var errClientDisconnected error
 
-//go:linkname errClosedResponseBody golang.org/x/net/http2.errClosedResponseBody
+//go:linkname errClosedResponseBody net/http/internal/http2.errClosedResponseBody
 var errClosedResponseBody error
 
 func IsUnexpectedError(err error) bool {
