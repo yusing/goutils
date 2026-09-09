@@ -436,10 +436,21 @@ func (p *ReverseProxy) handler(rw http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			xff = req.RemoteAddr
 		}
-		if len(prior) > 0 {
-			xff = strings.Join(prior, ", ") + ", " + xff
+		if previous := strings.Join(prior, ", "); previous != "" {
+			if xff != "" {
+				xff = previous + ", " + xff
+			} else {
+				xff = previous
+			}
 		}
-		outreq.Header.Set(httpheaders.HeaderXForwardedFor, xff)
+		// In-process requests have no client address. Do not invent an empty
+		// forwarded hop, including when middleware sets an empty value.
+		if xff == "" {
+			outreq.Header.Del(httpheaders.HeaderXForwardedFor)
+		} else {
+			outreq.Header.Set(httpheaders.HeaderXForwardedFor, xff)
+		}
+
 	}
 
 	var reqScheme string

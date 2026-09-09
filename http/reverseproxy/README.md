@@ -15,6 +15,8 @@ This package extends Go's `net/http/httputil/reverse_proxy` with:
 - **Error suppression**: Suppresses certain unimportant/expected errors to prevent logging them
 - **Performance optimizations**: Uses `CopyCloseContext` with sync.Pool for efficient body copying, reducing GC pressure
 
+Requests without a client address do not add an empty `X-Forwarded-For` hop. Existing nonempty forwarded chains are preserved, and a nil header slice still suppresses automatic forwarding.
+
 ## Key Differences from stdlib
 
 | Feature             | stdlib `httputil/reverse_proxy` | This Package                        |
