@@ -211,6 +211,15 @@ func (rt *h2cRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	if req == nil || req.URL == nil {
 		return rt.h1.RoundTrip(req)
 	}
+	// HTTP/1 upgrades (including WebSocket) cannot be sent over HTTP/2.
+	if httpguts.HeaderValuesContainsToken(req.Header["Connection"], "Upgrade") &&
+		!strings.EqualFold(req.Header.Get("Upgrade"), "h2c") {
+		if req.URL.Scheme == "h2c" {
+			req = req.Clone(req.Context())
+			req.URL.Scheme = "http"
+		}
+		return rt.h1.RoundTrip(req)
+	}
 	switch req.URL.Scheme {
 	case "h2c":
 		return rt.h2c.RoundTrip(prepareH2CRequest(req))

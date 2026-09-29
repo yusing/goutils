@@ -1,6 +1,7 @@
 package reverseproxy
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -167,11 +168,15 @@ func TestReverseProxySchemeRetryDoesNotMutateTargetURL(t *testing.T) {
 func TestReverseProxySchemeRetryBody(t *testing.T) {
 	t.Run("replays recreatable body", func(t *testing.T) {
 		target, err := url.Parse("http://backend.local")
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		var bodies []string
 		transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			body, err := io.ReadAll(req.Body)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			bodies = append(bodies, string(body))
 			if len(bodies) == 1 {
 				return nil, http.ErrSchemeMismatch
@@ -183,12 +188,16 @@ func TestReverseProxySchemeRetryBody(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "http://proxy.local/", strings.NewReader("payload"))
 		req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("payload")), nil }
 		rp.ServeHTTP(httptest.NewRecorder(), req)
-		if !slices.Equal(bodies, []string{"payload", "payload"}) { t.Fatalf("bodies = %q", bodies) }
+		if !slices.Equal(bodies, []string{"payload", "payload"}) {
+			t.Fatalf("bodies = %q", bodies)
+		}
 	})
 
 	t.Run("does not replay non-recreatable body", func(t *testing.T) {
 		target, err := url.Parse("http://backend.local")
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		calls := 0
 		transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			calls++
@@ -198,7 +207,9 @@ func TestReverseProxySchemeRetryBody(t *testing.T) {
 		rp := NewReverseProxy("retry", target, transport)
 		rp.OnSchemeMisMatch = func(string) (string, bool) { return "https", true }
 		rp.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "http://proxy.local/", strings.NewReader("payload")))
-		if calls != 1 { t.Fatalf("round trips = %d, want 1", calls) }
+		if calls != 1 {
+			t.Fatalf("round trips = %d, want 1", calls)
+		}
 	})
 }
 
@@ -430,5 +441,102 @@ func TestFlushResponseHeadersForStreamingPropagatesFlushError(t *testing.T) {
 	err := flushResponseHeadersForStreaming(rw, http.StatusOK)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("flush error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestH2CRoundTripper_UpgradeFallback(t *testing.T) {
+	for _, scheme := range []string{"http", "h2c"} {
+		for _, upgrade := range []string{"websocket", "custom", ""} {
+			t.Run(scheme+"/"+upgrade, func(t *testing.T) {
+				req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, scheme+"://backend.test/socket", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Header.Add("Connection", "keep-alive")
+				req.Header.Add("Connection", "uPgRaDe")
+				req.Header.Set("Upgrade", upgrade)
+				rt := newH2CRoundTripper(roundTripFunc(func(out *http.Request) (*http.Response, error) {
+					if out.URL.Scheme != "http" || out.Header.Get("Upgrade") != upgrade ||
+						!slices.Equal(out.Header.Values("Connection"), req.Header.Values("Connection")) {
+						t.Fatalf("fallback changed URL or upgrade headers: %v %v", out.URL, out.Header)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Header: make(http.Header)}, nil
+				}))
+				resp, err := rt.RoundTrip(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				resp.Body.Close()
+				if req.URL.Scheme != scheme {
+					t.Fatal("mutated original request URL")
+				}
+			})
+		}
+	}
+}
+
+func TestReverseProxy_H2C_WebSocket(t *testing.T) {
+	backend := httptest.NewServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 1 || r.Header.Get("Upgrade") != "websocket" {
+			t.Errorf("unexpected upstream request: %s %v", r.Proto, r.Header)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		conn, rw, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		_, err = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+		if err == nil {
+			err = rw.Flush()
+		}
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		// Echo a masked WebSocket frame to verify bidirectional tunnel bytes.
+		frame := make([]byte, 8)
+		if _, err := io.ReadFull(rw, frame); err != nil {
+			t.Error(err)
+			return
+		}
+		_, err = conn.Write([]byte{0x81, 2, frame[6] ^ frame[2], frame[7] ^ frame[3]})
+		if err != nil {
+			t.Error(err)
+		}
+	}), &http2.Server{}))
+	defer backend.Close()
+	target, _ := url.Parse("h2c://" + backend.Listener.Addr().String())
+	transport := &http.Transport{}
+	defer transport.CloseIdleConnections()
+	proxy := httptest.NewServer(NewReverseProxy("websocket-h2c", target, transport))
+	defer proxy.Close()
+	client := &http.Client{}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, proxy.URL, nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d, want 101", resp.StatusCode)
+	}
+	tunnel := resp.Body.(io.ReadWriteCloser)
+	if _, err := tunnel.Write([]byte{0x81, 0x82, 1, 2, 3, 4, 'h' ^ 1, 'i' ^ 2}); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]byte, 4)
+	if _, err := io.ReadFull(tunnel, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "\x81\x02hi" {
+		t.Fatalf("unexpected echo: %q", got)
 	}
 }
