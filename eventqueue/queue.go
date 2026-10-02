@@ -34,21 +34,10 @@ const (
 	defaultEventQueueFlushInterval = 1 * time.Second
 )
 
-// New returns a new EventQueue with the given
-// queueTask, flushInterval, onFlush and onError.
-//
-// The returned EventQueue will start a goroutine to flush events in the queue
-// when the flushInterval is reached.
-//
-// The onFlush function is called when the flushInterval is reached and the queue is not empty,
-//
-// The onError function is called when an error received from the errCh,
-// or panic occurs in the onFlush function. Panic will cause a E.ErrPanicRecv error.
-//
-// flushTask.Finish must be called after the flush is done,
-// but the onFlush function can return earlier (e.g. run in another goroutine).
-//
-// If task is canceled before the flushInterval is reached, the events in queue will be discarded.
+// New creates an EventQueue using queueTask and opt. Call Start to process events.
+// OnFlush runs for nonempty batches at FlushInterval and must return when the
+// batch is finished. OnError receives input errors and recovered OnFlush panics.
+// Debug includes a stack trace in recovered panic errors.
 func New[Event any](queueTask *task.Task, opt Options[Event]) *EventQueue[Event] {
 	capacity := defaultEventQueueCapacity
 	if opt.Capacity > 0 {
@@ -67,6 +56,9 @@ func New[Event any](queueTask *task.Task, opt Options[Event]) *EventQueue[Event]
 	}
 }
 
+// Start launches the processing goroutine. Cancellation or closure of either
+// input channel discards pending events, waits for an in-flight flush, and
+// finishes the queue's task.
 func (e *EventQueue[Event]) Start(eventCh <-chan Event, errCh <-chan error) {
 	onFlush := e.onFlush
 	flush := func(events []Event) (err error) {
