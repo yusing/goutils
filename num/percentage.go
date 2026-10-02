@@ -7,14 +7,14 @@ import (
 	strutils "github.com/yusing/goutils/strings"
 )
 
-// Percentage holds a value in the range [0, 100] with a precision of 0.4% (+-0.2%).
+// Percentage holds a value in [0, 100] with about 0.4 percentage-point spacing
+// and a maximum rounding error of about 0.25 percentage points.
 type Percentage struct {
 	code uint8
 }
 
 // Each table holds 128 evenly spaced values.
-// Two tables combined give 256 total intervals, and with careful spacing,
-// we can approximate or distribute ~1000 discrete levels total.
+// Combined, the tables provide about 251 distinct values after clamping to 100.
 var (
 	tableA [128]float64
 	tableB [128]float64
@@ -27,7 +27,7 @@ func round1(x float64) float64 {
 }
 
 func init() {
-	// fill in 1000 steps from 0 to 100 with even distribution
+	// Sample two interleaved sets from a 1000-step grid.
 	step := 100.0 / 999.0 // for 1000 values
 	for i := range 128 {
 		// Map first table (even indices) and second (odd offset)
