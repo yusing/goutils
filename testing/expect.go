@@ -159,10 +159,19 @@ func equalValues(got, want any) bool {
 	if !isNumeric(g.Kind()) || !isNumeric(w.Kind()) {
 		return reflect.DeepEqual(got, w.Convert(gt).Interface())
 	}
-	if gt.Size() > wt.Size() {
-		return reflect.DeepEqual(got, w.Convert(gt).Interface())
+	// Both conversions must be lossless. In particular, converting a float to
+	// an integer must not silently drop its fractional part.
+	if !gt.ConvertibleTo(wt) {
+		return false
 	}
-	return reflect.DeepEqual(g.Convert(wt).Interface(), want)
+	isSigned := func(k reflect.Kind) bool { return k >= reflect.Int && k <= reflect.Int64 }
+	isUnsigned := func(k reflect.Kind) bool { return k >= reflect.Uint && k <= reflect.Uintptr }
+	if (isSigned(g.Kind()) && g.Int() < 0 && isUnsigned(w.Kind())) ||
+		(isSigned(w.Kind()) && w.Int() < 0 && isUnsigned(g.Kind())) {
+		return false
+	}
+	return reflect.DeepEqual(got, w.Convert(gt).Interface()) &&
+		reflect.DeepEqual(g.Convert(wt).Interface(), want)
 }
 func Equal[T any](t *testing.T, got T, want T, msgAndArgs ...any) {
 	t.Helper()

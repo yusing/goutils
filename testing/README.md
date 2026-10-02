@@ -87,7 +87,8 @@ Some take a `*testing.T` and will not compile in a benchmark:
 - **`Equal`** uses `reflect.DeepEqual`, so a nil slice is not equal to an empty one. When
   the two values have different dynamic types (possible when `T` is an interface such as
   `any`), it also accepts convertible values, such as a named string type and `string`, or
-  numbers of different kinds. Numeric conversion can truncate, so `1.5` equals `1` there.
+  numbers of different kinds. Numeric equality requires lossless conversion in both
+  directions, so `1.5` does not equal `1`.
   `NotEqual` is strict `reflect.DeepEqual` only.
 - **`Nil`** is true for `nil` and for typed nil pointers, maps, slices, channels, and
   functions. `NotNil` is its negation.

@@ -31,7 +31,7 @@ func TestEqualAndNotEqual(t *testing.T) {
 		{"complex widths", complex64(1 + 2i), complex128(1 + 2i)},
 		{"named string", sampleString("hello"), "hello"},
 		{"integer to expected float", int64(1), float64(1)},
-		{"expected float to larger integer", int64(1), float32(1.5)},
+		{"expected float to larger integer", int64(1), float32(1)},
 		{"expected integer to string", "A", 65},
 		{"nil", nil, nil},
 		{"typed nil", (*int)(nil), (*int)(nil)},
