@@ -56,12 +56,15 @@ func Wrap(err error, message ...string) Error {
 }
 
 func Unwrap(err error) Error {
+	if err == nil {
+		return nil
+	}
 	//nolint:errorlint
 	switch err := err.(type) {
 	case interface{ Unwrap() []error }:
 		return &nestedError{Extras: err.Unwrap()}
 	case interface{ Unwrap() error }:
-		return baseError{err.Unwrap()}
+		return wrap(err.Unwrap())
 	default:
 		return baseError{err}
 	}

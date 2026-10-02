@@ -78,7 +78,7 @@ true
 | `New(msg)` | A new `Error`. `New("")` returns `nil`. |
 | `Errorf(format, args...)` | Like `fmt.Errorf`; `%w` operands still match `errors.Is`/`errors.As`. |
 | `Wrap(err, msg...)` | `"msg: err"`; with no (or an empty) message it only converts `err` to an `Error`. `Wrap(nil)` is `nil`. |
-| `Unwrap(err)` | One `Unwrap` step of a standard-library wrapper as an `Error`; the members of a multi-error become sub-errors. Do not pass `nil`: the result is not `nil` and its `Error()` panics. |
+| `Unwrap(err)` | One `Unwrap` step of a standard-library wrapper as an `Error`; the members of a multi-error become sub-errors. A nil input or nil unwrapped error returns nil. |
 | `Join(errs...)` | All non-nil errors, one per line, with no header. `nil` when all are `nil`. |
 | `JoinLines(main, lines...)` | `main` followed by one bulleted line per non-empty string. |
 
@@ -269,7 +269,7 @@ fmt.Print(m.Error())
 `DoYouMean(s)` returns a hint error (`Do you mean s?`) to attach with `With`. It
 returns `nil` for an empty string. `NearestField(input, candidates)` finds the closest
 candidate by Levenshtein distance, and `DoYouMeanField(input, candidates)` combines the
-two. `candidates` may be a `[]string`, a map with string keys, or a struct (or pointer
+two, returning nil if no candidate is available. `candidates` may be a `[]string`, a map with string keys, or a struct (or pointer
 to one):
 
 ```go

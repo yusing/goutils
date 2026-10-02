@@ -16,7 +16,7 @@ type Error interface {
 	// If there is already a subject in the error message, the subject will be
 	// prepended to the existing subject with " > ".
 	//
-	// Subject empty string is ignored.
+	// An empty subject is ignored only when the error already has subjects.
 	Subject(subject string) Error
 	// Subjectf is a wrapper for Subject(fmt.Sprintf(format, args...)).
 	Subjectf(format string, args ...any) Error

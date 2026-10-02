@@ -48,9 +48,5 @@ func DoYouMeanField(input string, s any) error {
 	if s == "" {
 		return nil
 	}
-	return &Hint{
-		Prefix:  "Do you mean ",
-		Message: NearestField(input, s),
-		Suffix:  "?",
-	}
+	return DoYouMean(NearestField(input, s))
 }
