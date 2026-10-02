@@ -7,13 +7,12 @@ import (
 	strutils "github.com/yusing/goutils/strings"
 )
 
-// Handle is wrapper around unique.Handle[string]
-// but it implements json.Unmarshaler and json.Marshaler.
+// Handle wraps unique.Handle[T] and implements JSON marshaling and unmarshaling.
 type Handle[T comparable] struct {
 	v unique.Handle[T]
 }
 
-// Make is returns a Handle[T] from a value v.
+// Make returns a Handle[T] from a value v.
 func Make[T comparable](v T) Handle[T] {
 	return Handle[T]{
 		v: unique.Make(v),

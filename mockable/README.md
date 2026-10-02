@@ -62,6 +62,5 @@ func TestStamp(t *testing.T) {
 - The variable is global and unsynchronized. Do not change it from parallel tests or while
   other goroutines read it.
 - Only code that calls `mockable.TimeNow()` is affected. The standard library, timers, and
-  other packages still use the real clock. Within `goutils`, only `strings.NewUUIDv7`
-  reads it.
+  other packages still use the real clock, including `strings.NewUUIDv7`.
 - The mocked value carries no monotonic clock reading, unlike `time.Now()`.
