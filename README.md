@@ -72,9 +72,10 @@ without local replacements. Root tags are `v0.8.0`; nested tags include the modu
 directory, such as `http/v0.8.0`. Actions needs permission to write repository
 contents; no additional release secret is required.
 
-Run releases from main. A published version cannot be reused or overwritten, even if its Git tag was
-deleted. The workflow checks both existing tags and Go's permanent checksum
-database before preparing a version.
+Run releases from main. A published version cannot be reused or overwritten, even
+if its Git tag was deleted. The workflow checks both existing tags and Go's
+permanent checksum database before preparing a version. Public-consumption checks
+retry up to ten times, one minute apart, to allow Go services to observe new tags.
 If validation or the atomic push fails before publication, rerun the workflow.
 If release creation or public-consumption verification fails after tags are
 published, rerun only the failed jobs of that run. Do not dispatch the same
