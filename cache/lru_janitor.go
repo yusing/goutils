@@ -21,17 +21,23 @@ type state struct {
 	pendingCleanup  atomic.Bool
 }
 
-const maxStatesPerJanitor = 32
+const (
+	cleanupQueueSize = 32
+	stateBlockSize   = 32
+)
+
+type stateBlock [stateBlockSize]atomic.Pointer[state]
+type stateBlocks []*stateBlock
 
 type statesJanitor struct {
-	states    [maxStatesPerJanitor]*state
-	numStates atomic.Int32
-	signal    chan *state
+	blocks atomic.Pointer[stateBlocks] // immutable directory; slots are published separately
+	next   atomic.Int64
+	signal chan *state
 }
 
 func newStatesJanitor() *statesJanitor {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 	go j.runLoop()
 	return j
@@ -41,19 +47,44 @@ func newStatesJanitor() *statesJanitor {
 // it cannot be removed. The cleanupInterval is the minimum time
 // between cleanups for this state.
 func (j *statesJanitor) Add(s State, cleanupInterval time.Duration) int {
-	idx := int(j.numStates.Add(1)) - 1
-	if idx >= len(j.states) {
-		panic(fmt.Sprintf("too many states: %d", idx))
+	idx := int(j.next.Add(1) - 1)
+	blockIdx := idx / stateBlockSize
+	for {
+		old := j.blocks.Load()
+		if old != nil && blockIdx < len(*old) {
+			(*old)[blockIdx][idx%stateBlockSize].Store(&state{State: s, cleanupInterval: cleanupInterval})
+			return idx
+		}
+		var blocks stateBlocks
+		if old != nil {
+			blocks = make(stateBlocks, max(blockIdx+1, 2*len(*old)))
+			copy(blocks, *old)
+		} else {
+			blocks = make(stateBlocks, blockIdx+1)
+		}
+		for i := range blocks {
+			if blocks[i] == nil {
+				blocks[i] = new(stateBlock)
+			}
+		}
+		j.blocks.CompareAndSwap(old, &blocks)
 	}
-	j.states[idx] = &state{State: s, cleanupInterval: cleanupInterval}
-	return idx
+}
+
+func (j *statesJanitor) loadState(idx int) *state {
+	blocks := j.blocks.Load()
+	if idx < 0 || blocks == nil || idx/stateBlockSize >= len(*blocks) {
+		panic(fmt.Sprintf("invalid state index: %d", idx))
+	}
+	s := (*blocks)[idx/stateBlockSize][idx%stateBlockSize].Load()
+	if s == nil {
+		panic(fmt.Sprintf("invalid state index: %d", idx))
+	}
+	return s
 }
 
 func (j *statesJanitor) TriggerCleanup(idx int) {
-	if idx < 0 || idx >= len(j.states) {
-		panic(fmt.Sprintf("invalid state index: %d", idx))
-	}
-	state := j.states[idx]
+	state := j.loadState(idx)
 	if !state.pendingCleanup.CompareAndSwap(false, true) {
 		// already triggered
 		return
@@ -66,8 +97,18 @@ func (j *statesJanitor) TriggerCleanup(idx int) {
 }
 
 func (j *statesJanitor) CleanupAll() {
-	states := j.states[:j.numStates.Load()]
-	for _, s := range states {
+	// Fix the frontier before callbacks can register additional states. Add may have
+	// reserved an index without publishing its slot yet; skip it until a later sweep.
+	n := int(j.next.Load())
+	blocks := j.blocks.Load()
+	if blocks == nil {
+		return
+	}
+	for idx := range min(n, len(*blocks)*stateBlockSize) {
+		s := (*blocks)[idx/stateBlockSize][idx%stateBlockSize].Load()
+		if s == nil {
+			continue
+		}
 		if !s.pendingCleanup.CompareAndSwap(false, true) {
 			// already triggered, will be handled in case s := <-j.signal below
 			continue

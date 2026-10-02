@@ -66,8 +66,7 @@ and `Build()` returns the cached function (`CachedContextFunc[T]` or
 `CachedContextKeyFunc[T, K]`). Builder methods return modified copies, so chain them and
 finish with `Build()`. Build a cache once, at start-up or as a long-lived field, and
 reuse the function: a cache built per request caches nothing across requests, and each
-bounded keyed cache permanently uses one of a small number of process-wide slots (see
-Limits).
+bounded keyed cache permanently registers with the process-wide janitor (see Limits).
 
 ## Behavior
 
@@ -128,11 +127,10 @@ the janitor may trim (default 15 s, minimum 1 s, ignored without `WithMaxEntries
   least recently used entries. The limit is soft: the janitor runs at most once per
   cleanup interval, so the size can exceed `n` until the next pass. A key evicted while
   still wanted is simply recomputed on its next call.
-- The janitor is process-wide and holds at most 32 bounded caches. The 33rd `Build()` of
-  a cache with `WithMaxEntries` panics with `too many states: 32`, and registrations are
-  never released, so do not build bounded caches dynamically.
-  `cache.Janitor` and the `State` interface are exported for custom cleanup states
-  (which use the same 32 slots).
+- The janitor is process-wide with no fixed registration limit. Registrations are
+  never released, so build bounded caches once and reuse them rather than creating
+  them per request. `cache.Janitor` and the `State` interface are exported for custom
+  cleanup states, which have the same process-lifetime ownership.
 
 ## Debug logging
 

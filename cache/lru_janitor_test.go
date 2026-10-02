@@ -26,7 +26,7 @@ func (m *mockState) CleanupCount() int {
 
 func TestStatesJanitor_Add(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	// Test adding states within capacity
@@ -43,42 +43,42 @@ func TestStatesJanitor_Add(t *testing.T) {
 		t.Errorf("Expected second state index to be 1, got %d", idx2)
 	}
 
-	if j.numStates.Load() != 2 {
-		t.Errorf("Expected numStates to be 2, got %d", j.numStates.Load())
+	if int(j.next.Load()) != 2 {
+		t.Errorf("Expected number of states to be 2, got %d", int(j.next.Load()))
 	}
 
 	// Test that states are properly stored
-	if j.states[0].State != mock1 {
+	if j.loadState(0).State != mock1 {
 		t.Error("First state not stored correctly")
 	}
-	if j.states[1].State != mock2 {
+	if j.loadState(1).State != mock2 {
 		t.Error("Second state not stored correctly")
 	}
 }
 
-func TestStatesJanitor_AddPanicOnOverflow(t *testing.T) {
-	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
-	}
-
-	// Fill up to capacity
-	for range maxStatesPerJanitor {
-		j.Add(&mockState{}, time.Minute)
-	}
-
-	// Should panic when trying to add beyond capacity
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Expected panic when adding too many states")
+func TestStatesJanitor_AddBeyondQueueCapacity(t *testing.T) {
+	j := &statesJanitor{signal: make(chan *state, cleanupQueueSize)}
+	for i := range 3 * cleanupQueueSize {
+		mock := &mockState{}
+		if idx := j.Add(mock, 0); idx != i {
+			t.Fatalf("index = %d, want %d", idx, i)
 		}
-	}()
-
-	j.Add(&mockState{}, time.Minute)
+		if j.loadState(i).State != mock {
+			t.Fatalf("state %d was not stored", i)
+		}
+	}
+	j.CleanupAll()
+	for i := range int(j.next.Load()) {
+		s := j.loadState(i)
+		if got := s.State.(*mockState).CleanupCount(); got != 1 {
+			t.Errorf("state %d cleanup count = %d, want 1", i, got)
+		}
+	}
 }
 
 func TestStatesJanitor_TriggerCleanup(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	mock := &mockState{}
@@ -102,7 +102,7 @@ func TestStatesJanitor_TriggerCleanup(t *testing.T) {
 
 func TestStatesJanitor_TriggerCleanupInvalidIndex(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	// Test negative index
@@ -116,7 +116,7 @@ func TestStatesJanitor_TriggerCleanupInvalidIndex(t *testing.T) {
 
 func TestStatesJanitor_TriggerCleanupIndexTooLarge(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	// Test index too large
@@ -130,7 +130,7 @@ func TestStatesJanitor_TriggerCleanupIndexTooLarge(t *testing.T) {
 
 func TestStatesJanitor_CleanupAll(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	mock1 := &mockState{}
@@ -156,7 +156,7 @@ func TestStatesJanitor_CleanupAll(t *testing.T) {
 
 func TestStatesJanitor_CleanupInterval(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	mock := &mockState{}
@@ -164,13 +164,13 @@ func TestStatesJanitor_CleanupInterval(t *testing.T) {
 	idx := j.Add(mock, interval)
 
 	// First cleanup should succeed
-	j.cleanup(j.states[idx])
+	j.cleanup(j.loadState(idx))
 	if mock.CleanupCount() != 1 {
 		t.Errorf("Expected 1 cleanup, got %d", mock.CleanupCount())
 	}
 
 	// Immediate second cleanup should be skipped
-	j.cleanup(j.states[idx])
+	j.cleanup(j.loadState(idx))
 	if mock.CleanupCount() != 1 {
 		t.Errorf("Expected cleanup to be skipped, got %d cleanups", mock.CleanupCount())
 	}
@@ -179,7 +179,7 @@ func TestStatesJanitor_CleanupInterval(t *testing.T) {
 	time.Sleep(interval + 10*time.Millisecond)
 
 	// Third cleanup should succeed
-	j.cleanup(j.states[idx])
+	j.cleanup(j.loadState(idx))
 	if mock.CleanupCount() != 2 {
 		t.Errorf("Expected 2 cleanups, got %d", mock.CleanupCount())
 	}
@@ -187,7 +187,7 @@ func TestStatesJanitor_CleanupInterval(t *testing.T) {
 
 func TestStatesJanitor_ConcurrentCleanup(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	mock := &mockState{}
@@ -231,7 +231,7 @@ func TestStatesJanitor_ConcurrentCleanup(t *testing.T) {
 
 func TestStatesJanitor_TriggerCleanupIdempotent(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	mock := &mockState{}
@@ -265,7 +265,7 @@ func TestStatesJanitor_TriggerCleanupIdempotent(t *testing.T) {
 
 func TestStatesJanitor_CleanupAllWithPendingCleanup(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	mock := &mockState{}
@@ -299,7 +299,7 @@ done:
 
 func TestStatesJanitor_TriggerCleanupCanRunAgainAfterSignalProcessing(t *testing.T) {
 	j := &statesJanitor{
-		signal: make(chan *state, maxStatesPerJanitor),
+		signal: make(chan *state, cleanupQueueSize),
 	}
 
 	mock := &mockState{}
