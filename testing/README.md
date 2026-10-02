@@ -1,73 +1,50 @@
-# testing
+# goutils/testing
 
-Testing utilities with testify wrappers and logging support.
-
-## Overview
-
-The `testing` package provides wrapper functions around testify/require for common assertions.
-
-## API Reference
-
-### Panic Handler
-
-```go
-func Must[Result any](r Result, err error) Result
-```
-
-### Assertions
-
-```go
-var (
-    NoError        = require.NoError
-    HasError       = require.Error
-    True           = require.True
-    False          = require.False
-    Nil            = require.Nil
-    NotNil         = require.NotNil
-    ErrorContains  = require.ErrorContains
-    Panics         = require.Panics
-    Greater        = require.Greater
-    Less           = require.Less
-    GreaterOrEqual = require.GreaterOrEqual
-    LessOrEqual    = require.LessOrEqual
-)
-```
-
-### Custom Assertions
-
-```go
-func ErrorIs(t *testing.T, expected error, err error, msgAndArgs ...any)
-func ErrorT[T error](t *testing.T, err error, msgAndArgs ...any)
-func Equal[T any](t *testing.T, got T, want T, msgAndArgs ...any)
-func NotEqual[T any](t *testing.T, got T, want T, msgAndArgs ...any)
-func Contains[T any](t *testing.T, got T, wants []T, msgAndArgs ...any)
-func StringsContain(t *testing.T, got string, want string, msgAndArgs ...any)
-func Type[T any](t *testing.T, got any, msgAndArgs ...any) T
-```
+Dependency-free, fail-fast testing helpers built on the Go standard library.
+The package name is `expect`.
 
 ## Usage
 
 ```go
-package mypkg
+package example
 
 import (
     "testing"
-    "github.com/yusing/goutils/expect"
+    expect "github.com/yusing/goutils/testing"
 )
 
-func TestMyFunc(t *testing.T) {
-    result, err := MyFunc()
-    expect.NoError(t, err)
-    expect.Equal(t, result, expectedValue)
-
-    // Type assertion with generics
-    typed := expect.Type[MyType](t, someValue)
+func TestValue(t *testing.T) {
+    expect.Equal(t, []string{"ready"}, []string{"ready"})
+    expect.True(t, true)
 }
 ```
 
-## Features
+Assertions mark themselves as helpers and stop the current test on failure.
+An optional message may be a plain string or a format string followed by arguments.
 
-- Simplified assertion API
-- Generic type support
-- Automatic verbose mode in tests
-- Debug-level logging in tests
+## Assertions
+
+- `NoError`, `HasError`, `ErrorContains`, and `ErrorIs` inspect errors.
+  `ErrorIs(t, expected, err)` uses `errors.Is`; `ErrorT[T](t, err)` finds a wrapped
+  error of type `T`.
+- `True`, `False`, `Nil`, `NotNil`, `Empty`, and `NotEmpty` inspect values.
+  Nil checks include typed nil pointers, maps, slices, channels, and functions.
+  Empty checks include zero-length collections and strings, zero values
+  (including arrays whose elements are all zero), and
+  pointers to empty values.
+- `Equal(t, got, want)` compares deep values and convertible numeric types.
+  `NotEqual` checks strict deep inequality, including concrete types.
+- `Greater`, `Less`, `GreaterOrEqual`, and `LessOrEqual` accept values of the same
+  ordered type, including strings and named numeric types such as durations.
+- `Contains(t, element, choices)` checks deep membership in a slice.
+  `StringsContain(t, text, substring)` checks substring containment.
+- `Panics` requires the supplied function to panic.
+  `Type[T](t, value)` asserts and returns a value of type `T`.
+- `Must(result, err)` returns the result or panics with the non-nil error.
+
+## Test Configuration
+
+Importing this package into a test executable enables verbose test output.
+The package does not configure logging or change framework log levels. Tests that
+need diagnostics should install a logger through
+[`goutils/logging`](../logging/README.md) and configure their chosen framework.

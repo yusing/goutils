@@ -1,13 +1,14 @@
 package pool
 
 import (
+	"fmt"
 	"sort"
 	"sync/atomic"
 	"time"
 
 	"github.com/puzpuzpuz/xsync/v4"
-	"github.com/rs/zerolog/log"
 	"github.com/yusing/goutils/events"
+	"github.com/yusing/goutils/logging"
 )
 
 const (
@@ -200,9 +201,9 @@ func (p *Pool[T]) logRemoved(info removedInfo) {
 		return
 	}
 	if info.display != info.name {
-		log.Info().Msgf("%s: removed %s (%s)", p.name, info.display, info.name)
+		logging.Log(logging.Info, fmt.Sprintf("%s: removed %s (%s)", p.name, info.display, info.name))
 	} else {
-		log.Info().Msgf("%s: removed %s", p.name, info.name)
+		logging.Log(logging.Info, fmt.Sprintf("%s: removed %s", p.name, info.name))
 	}
 }
 
@@ -216,10 +217,10 @@ func (p *Pool[T]) logAction(action string, obj T) {
 	name := obj.Name()
 	disp := displayNameOf(obj)
 	if disp != name {
-		log.Info().Msgf("%s: %s %s (%s)", p.name, action, disp, name)
+		logging.Log(logging.Info, fmt.Sprintf("%s: %s %s (%s)", p.name, action, disp, name))
 		return
 	}
-	log.Info().Msgf("%s: %s %s", p.name, action, name)
+	logging.Log(logging.Info, fmt.Sprintf("%s: %s %s", p.name, action, name))
 }
 
 func (p *Pool[T]) PurgeExpiredTombs() (purged int) {

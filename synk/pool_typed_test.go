@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func TestTypedWeakPoolQueue(t *testing.T) {
@@ -20,19 +20,19 @@ func TestTypedWeakPoolQueue(t *testing.T) {
 	}
 	pool := newTypedWeakPool(sharedLimit)
 	for i := 1; i <= entries; i++ {
-		require.True(t, pool.Put(weakBuf{cap: i}))
+		expect.True(t, pool.Put(weakBuf{cap: i}))
 	}
-	require.False(t, pool.Put(weakBuf{cap: entries + 1}))
+	expect.False(t, pool.Put(weakBuf{cap: entries + 1}))
 
 	seen := make(map[int]bool, entries)
 	for range entries {
 		value, ok := pool.Get()
-		require.True(t, ok, "typed pool lost an entry")
-		require.False(t, seen[value.cap], "typed pool returned capacity %d twice", value.cap)
+		expect.True(t, ok, "typed pool lost an entry")
+		expect.False(t, seen[value.cap], "typed pool returned capacity %d twice", value.cap)
 		seen[value.cap] = true
 	}
 	_, ok := pool.Get()
-	require.False(t, ok, "typed pool returned an entry after drain")
+	expect.False(t, ok, "typed pool returned an entry after drain")
 }
 
 func TestTypedWeakPoolConcurrent(t *testing.T) {
@@ -55,5 +55,7 @@ func TestTypedWeakPoolConcurrent(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	require.Positive(t, gets.Load())
+	if gets.Load() <= 0 {
+		t.Fatalf("expected positive, got %v", gets.Load())
+	}
 }

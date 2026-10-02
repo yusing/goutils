@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func TestIndexFold(t *testing.T) {
@@ -31,10 +31,10 @@ func TestIndexFold(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.wantIndex, IndexFold(tt.s, tt.substr))
-			require.Equal(t, tt.wantContains, ContainsFold(tt.s, tt.substr))
-			require.Equal(t, tt.wantPrefix, HasPrefixFold(tt.s, tt.substr))
-			require.Equal(t, tt.wantSuffix, HasSuffixFold(tt.s, tt.substr))
+			expect.Equal(t, IndexFold(tt.s, tt.substr), tt.wantIndex)
+			expect.Equal(t, ContainsFold(tt.s, tt.substr), tt.wantContains)
+			expect.Equal(t, HasPrefixFold(tt.s, tt.substr), tt.wantPrefix)
+			expect.Equal(t, HasSuffixFold(tt.s, tt.substr), tt.wantSuffix)
 		})
 	}
 }
@@ -92,7 +92,7 @@ func TestLevenshteinDistance(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%q_%q", tt.a, tt.b), func(t *testing.T) {
-			require.Equal(t, tt.want, LevenshteinDistance(tt.a, tt.b))
+			expect.Equal(t, LevenshteinDistance(tt.a, tt.b), tt.want)
 		})
 	}
 }

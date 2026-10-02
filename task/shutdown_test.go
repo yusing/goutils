@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 // tree shaped like production: config -> provider -> routes, each route holding
@@ -27,9 +27,11 @@ func TestGracefulShutdownRunsEveryCallbackWithinBudget(t *testing.T) {
 	var invoked atomic.Int64
 	newRouteTree(t, 50, func() { invoked.Add(1) })
 
-	require.NoError(t, gracefulShutdown(3*time.Second))
-	require.EqualValues(t, 100, invoked.Load())
-	require.Zero(t, root.children.Len())
+	expect.NoError(t, gracefulShutdown(3*time.Second))
+	expect.Equal(t, invoked.Load(), 100)
+	if root.children.Len() != 0 {
+		t.Fatalf("expected zero, got %v", root.children.Len())
+	}
 }
 
 // A shutdown with no budget must not claim that a healthy tree is stuck, but it
@@ -40,8 +42,8 @@ func TestGracefulShutdownWithoutBudgetFails(t *testing.T) {
 	newRouteTree(t, 5, func() {})
 
 	start := time.Now()
-	require.Error(t, gracefulShutdown(0))
-	require.Less(t, time.Since(start), time.Second)
+	expect.HasError(t, gracefulShutdown(0))
+	expect.Less(t, time.Since(start), time.Second)
 }
 
 func TestStuckCallbackIsReportedWithItsOwner(t *testing.T) {
@@ -54,14 +56,14 @@ func TestStuckCallbackIsReportedWithItsOwner(t *testing.T) {
 	route := cfg.Subtask("route.myapp", false)
 	route.OnCancel("remove_route", func() { <-release })
 
-	require.Error(t, gracefulShutdown(100*time.Millisecond))
+	expect.HasError(t, gracefulShutdown(100*time.Millisecond))
 
 	// The route task stays in the tree while its callback hangs, so the report can
 	// say which route is holding shutdown up.
 	var stuck stuckSubtree
 	stuck.collect(root)
-	require.Contains(t, stuck.callbacks, "config.route.myapp: remove_route")
-	require.Contains(t, stuck.children, "config.route.myapp")
+	expect.Contains(t, "config.route.myapp: remove_route", stuck.callbacks)
+	expect.Contains(t, "config.route.myapp", stuck.children)
 }
 
 // Outside shutdown a stuck callback must not pin its task to the parent forever.
@@ -76,7 +78,9 @@ func TestStuckCallbackDetachesOutsideShutdown(t *testing.T) {
 	child.OnCancel("blocked", func() { <-release })
 
 	child.FinishAndWait(nil) // gives up after taskTimeout
-	require.Zero(t, parent.children.Len())
+	if parent.children.Len() != 0 {
+		t.Fatalf("expected zero, got %v", parent.children.Len())
+	}
 }
 
 // A nested FinishAndWait must not outlast the program-wide shutdown budget,
@@ -98,14 +102,16 @@ func TestNestedWaitStaysWithinShutdownBudget(t *testing.T) {
 	_ = gracefulShutdown(200 * time.Millisecond)
 	elapsed := time.Since(start)
 
-	require.Less(t, elapsed, taskTimeout, "nested wait used its own timeout instead of the shutdown budget")
+	expect.Less(t, elapsed, taskTimeout, "nested wait used its own timeout instead of the shutdown budget")
 }
 
 func TestWaitTimeoutTracksShutdownBudget(t *testing.T) {
-	require.Equal(t, taskTimeout, waitTimeout())
+	expect.Equal(t, waitTimeout(), taskTimeout)
 
 	shutdownDeadline.Store(time.Now().Add(50 * time.Millisecond).UnixNano())
 	t.Cleanup(func() { shutdownDeadline.Store(0) })
-	require.Less(t, waitTimeout(), taskTimeout)
-	require.Positive(t, waitTimeout())
+	expect.Less(t, waitTimeout(), taskTimeout)
+	if waitTimeout() <= 0 {
+		t.Fatalf("expected positive, got %v", waitTimeout())
+	}
 }

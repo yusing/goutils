@@ -5,12 +5,12 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func TestCacheUpdateCookiesUpdatesCookiesMap(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
-	require.NoError(t, err)
+	expect.NoError(t, err)
 	req.AddCookie(&http.Cookie{Name: "old", Value: "stale"})
 
 	cache := NewCache()
@@ -34,7 +34,7 @@ func TestCacheUpdateCookiesUpdatesCookiesMap(t *testing.T) {
 		"semicolon-separated": {"alpha", "beta"},
 	}
 
-	require.Equal(t, got, want)
+	expect.Equal(t, got, want)
 }
 
 func TestJoinCookieValues(t *testing.T) {
@@ -76,7 +76,7 @@ func TestJoinCookieValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := joinCookieValues(tt.existing, tt.newCookie)
-			require.Equal(t, tt.want, got)
+			expect.Equal(t, tt.want, got)
 		})
 	}
 }

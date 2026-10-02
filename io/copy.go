@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/yusing/goutils/http/httpheaders"
+	"github.com/yusing/goutils/internal/httpheaders"
 	"github.com/yusing/goutils/synk"
 )
 

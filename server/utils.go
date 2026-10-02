@@ -26,7 +26,7 @@ func advertiseHTTP3(handler http.Handler, h3 *http3.Server) http.Handler {
 					errors.Is(err, syscall.ECONNRESET):
 					return
 				}
-				httputils.LogError(r).Msg(err.Error())
+				httputils.LogError(r, err.Error())
 				if httpheaders.IsWebsocket(r.Header) {
 					return
 				}

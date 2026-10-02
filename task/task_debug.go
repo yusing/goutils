@@ -5,7 +5,7 @@ package task
 import (
 	"runtime/debug"
 
-	"github.com/rs/zerolog/log"
+	"github.com/yusing/goutils/logging"
 )
 
 func panicWithDebugStack() {
@@ -13,9 +13,9 @@ func panicWithDebugStack() {
 }
 
 func logStarted(t *Task) {
-	log.Info().Msg("task " + t.String() + " started")
+	logging.Log(logging.Info, "task "+t.String()+" started")
 }
 
 func logFinished(t *Task) {
-	log.Info().Msg("task " + t.String() + " finished")
+	logging.Log(logging.Info, "task "+t.String()+" finished")
 }

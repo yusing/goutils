@@ -3,13 +3,14 @@
 package pool
 
 import (
+	"fmt"
 	"runtime/debug"
 
-	"github.com/rs/zerolog/log"
+	"github.com/yusing/goutils/logging"
 )
 
 func (p *Pool[T]) checkExists(key string) {
 	if cur, ok := p.m.Load(key); ok && !cur.tomb {
-		log.Warn().Msgf("%s: key %s already exists\nstacktrace: %s", p.name, key, string(debug.Stack()))
+		logging.Log(logging.Warn, fmt.Sprintf("%s: key %s already exists\nstacktrace: %s", p.name, key, string(debug.Stack())))
 	}
 }

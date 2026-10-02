@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 type flushCountingResponseWriter struct {
@@ -40,9 +40,11 @@ func TestCopyClose_FlushesEventStreamResponses(t *testing.T) {
 	src := strings.NewReader("data: one\n\ndata: two\n\n")
 
 	err := CopyClose(dst, src, 5)
-	require.NoError(t, err)
-	require.Positive(t, dst.writes)
-	require.Equal(t, dst.writes, dst.flushCount)
+	expect.NoError(t, err)
+	if dst.writes <= 0 {
+		t.Fatalf("expected positive, got %v", dst.writes)
+	}
+	expect.Equal(t, dst.flushCount, dst.writes)
 }
 
 func TestCopyClose_DoesNotFlushBufferedVideoResponses(t *testing.T) {
@@ -53,9 +55,13 @@ func TestCopyClose_DoesNotFlushBufferedVideoResponses(t *testing.T) {
 	src := strings.NewReader("hello world!")
 
 	err := CopyClose(dst, src, 4)
-	require.NoError(t, err)
-	require.Positive(t, dst.writes)
-	require.Zero(t, dst.flushCount)
+	expect.NoError(t, err)
+	if dst.writes <= 0 {
+		t.Fatalf("expected positive, got %v", dst.writes)
+	}
+	if dst.flushCount != 0 {
+		t.Fatalf("expected zero, got %v", dst.flushCount)
+	}
 }
 
 func TestCopyClose_FlushesChunkedResponsesWithoutContentLength(t *testing.T) {
@@ -66,9 +72,11 @@ func TestCopyClose_FlushesChunkedResponsesWithoutContentLength(t *testing.T) {
 	src := io.NopCloser(strings.NewReader("chunked body"))
 
 	err := CopyClose(dst, src, 3)
-	require.NoError(t, err)
-	require.Positive(t, dst.writes)
-	require.Equal(t, dst.writes, dst.flushCount)
+	expect.NoError(t, err)
+	if dst.writes <= 0 {
+		t.Fatalf("expected positive, got %v", dst.writes)
+	}
+	expect.Equal(t, dst.flushCount, dst.writes)
 }
 
 func TestCopyClose_FlushesStreamingResponsesWithoutLength(t *testing.T) {
@@ -78,9 +86,11 @@ func TestCopyClose_FlushesStreamingResponsesWithoutLength(t *testing.T) {
 	src := strings.NewReader("streaming body")
 
 	err := CopyClose(dst, src, -1)
-	require.NoError(t, err)
-	require.Positive(t, dst.writes)
-	require.Equal(t, dst.writes, dst.flushCount)
+	expect.NoError(t, err)
+	if dst.writes <= 0 {
+		t.Fatalf("expected positive, got %v", dst.writes)
+	}
+	expect.Equal(t, dst.flushCount, dst.writes)
 }
 
 func TestCopyClose_FlushesGRPCResponses(t *testing.T) {
@@ -93,9 +103,11 @@ func TestCopyClose_FlushesGRPCResponses(t *testing.T) {
 			src := strings.NewReader("hello world!")
 
 			err := CopyClose(dst, src, 4)
-			require.NoError(t, err)
-			require.Positive(t, dst.writes)
-			require.Equal(t, dst.writes, dst.flushCount)
+			expect.NoError(t, err)
+			if dst.writes <= 0 {
+				t.Fatalf("expected positive, got %v", dst.writes)
+			}
+			expect.Equal(t, dst.flushCount, dst.writes)
 		})
 	}
 }
@@ -121,9 +133,11 @@ func TestCopyClose_IgnoresUnsupportedFlush(t *testing.T) {
 	src := strings.NewReader("buffered body")
 
 	err := CopyClose(dst, src, -1)
-	require.NoError(t, err)
-	require.Positive(t, dst.writes)
-	require.Equal(t, dst.writes, dst.flushCount)
+	expect.NoError(t, err)
+	if dst.writes <= 0 {
+		t.Fatalf("expected positive, got %v", dst.writes)
+	}
+	expect.Equal(t, dst.flushCount, dst.writes)
 }
 
 func TestCopyClose_IgnoresUnsupportedFlushForGRPCAndSSE(t *testing.T) {
@@ -135,9 +149,11 @@ func TestCopyClose_IgnoresUnsupportedFlushForGRPCAndSSE(t *testing.T) {
 			src := strings.NewReader("buffered body")
 
 			err := CopyClose(dst, src, -1)
-			require.NoError(t, err)
-			require.Positive(t, dst.writes)
-			require.Equal(t, dst.writes, dst.flushCount)
+			expect.NoError(t, err)
+			if dst.writes <= 0 {
+				t.Fatalf("expected positive, got %v", dst.writes)
+			}
+			expect.Equal(t, dst.flushCount, dst.writes)
 		})
 	}
 }

@@ -2,6 +2,10 @@
 
 A pool of byte buffers that are reused instead of allocated and freed.
 
+The `pprof` build emits pool statistics through
+[`goutils/logging`](../logging/README.md) when an application logger is installed.
+No logging framework is imported or configured by this package.
+
 ## Usage
 
 ```go

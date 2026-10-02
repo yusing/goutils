@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func TestBidirectionalPipeStopsOnContextCancel(t *testing.T) {
@@ -22,7 +22,7 @@ func TestBidirectionalPipeStopsOnContextCancel(t *testing.T) {
 
 	select {
 	case err := <-done:
-		require.NoError(t, err)
+		expect.NoError(t, err)
 	case <-time.After(time.Second):
 		t.Fatal("bidirectional pipe did not stop after context cancellation")
 	}

@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 	"golang.org/x/net/http2"
 )
 
@@ -19,14 +19,14 @@ func TestIsUnexpectedError(t *testing.T) {
 	}
 	for name, err := range expected {
 		t.Run(name, func(t *testing.T) {
-			require.NotNil(t, err)
-			require.False(t, IsUnexpectedError(err))
-			require.False(t, IsUnexpectedError(fmt.Errorf("wrapped: %w", err)))
+			expect.NotNil(t, err)
+			expect.False(t, IsUnexpectedError(err))
+			expect.False(t, IsUnexpectedError(fmt.Errorf("wrapped: %w", err)))
 		})
 	}
 
-	require.False(t, IsUnexpectedError(http2.StreamError{Code: http2.ErrCodeCancel}))
-	require.True(t, IsUnexpectedError(errors.New("ordinary error")))
+	expect.False(t, IsUnexpectedError(http2.StreamError{Code: http2.ErrCodeCancel}))
+	expect.True(t, IsUnexpectedError(errors.New("ordinary error")))
 }
 
 type flushErrorResponseWriter struct {
@@ -65,14 +65,15 @@ func TestResponseModifierFlushErrorClassification(t *testing.T) {
 			rm := NewPassthroughResponseModifier(w)
 
 			_, err := rm.Write([]byte("favicon"))
-			require.NoError(t, err)
+			expect.NoError(t, err)
 			_, err = rm.FlushRelease()
 			if tt.wantErr == "" {
-				require.NoError(t, err)
+				expect.NoError(t, err)
 			} else {
-				require.EqualError(t, err, tt.wantErr)
+				expect.HasError(t, err)
+				expect.Equal(t, err.Error(), tt.wantErr)
 			}
-			require.Equal(t, "favicon", w.body.String())
+			expect.Equal(t, "favicon", w.body.String())
 		})
 	}
 }

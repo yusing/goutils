@@ -3,8 +3,8 @@ package task
 import (
 	"fmt"
 
-	"github.com/rs/zerolog/log"
 	gperr "github.com/yusing/goutils/errs"
+	"github.com/yusing/goutils/logging"
 )
 
 type stuckSubtree struct {
@@ -51,5 +51,5 @@ func (t *Task) reportStucked(cause error) {
 		}
 		fmtOutput.Add(childrenBuilder.Error())
 	}
-	log.Warn().Msg(fmtOutput.String())
+	logging.Log(logging.Warn, fmtOutput.String())
 }

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	"github.com/yusing/goutils/task"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func TestStartReceivesEventsWhileFlushIsBlocked(t *testing.T) {
@@ -55,7 +55,7 @@ func TestStartReceivesEventsWhileFlushIsBlocked(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for first flush")
 	}
-	require.Equal(t, []int{1}, receiveFlushedEvents(t, flushed))
+	expect.Equal(t, receiveFlushedEvents(t, flushed), []int{1})
 
 	select {
 	case eventCh <- 2:
@@ -67,10 +67,10 @@ func TestStartReceivesEventsWhileFlushIsBlocked(t *testing.T) {
 		t.Fatalf("flush ran concurrently: %v", events)
 	case <-time.After(20 * time.Millisecond):
 	}
-	require.False(t, concurrentFlush.Load())
+	expect.False(t, concurrentFlush.Load())
 
 	release()
-	require.Equal(t, []int{2}, receiveFlushedEvents(t, flushed))
+	expect.Equal(t, receiveFlushedEvents(t, flushed), []int{2})
 }
 
 func receiveFlushedEvents(t *testing.T, flushed <-chan []int) []int {

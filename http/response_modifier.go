@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/rs/zerolog/log"
 	gperr "github.com/yusing/goutils/errs"
+	"github.com/yusing/goutils/logging"
 	"github.com/yusing/goutils/synk"
 )
 
@@ -83,7 +83,7 @@ type responseAsRW struct {
 }
 
 func (r responseAsRW) WriteHeader(code int) {
-	log.Error().Msg("write header after response has been created")
+	logging.Log(logging.Error, "write header after response has been created")
 }
 
 func (r responseAsRW) Write(b []byte) (int, error) {

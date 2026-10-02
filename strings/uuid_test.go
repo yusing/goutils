@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	"github.com/yusing/goutils/mockable"
 	. "github.com/yusing/goutils/strings"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func TestNewUUIDv7(t *testing.T) {
@@ -16,5 +16,5 @@ func TestNewUUIDv7(t *testing.T) {
 	}
 
 	id := NewUUIDv7()
-	require.Equal(t, "01550ea1-a8c0-7001-8000-000000000000", id)
+	expect.Equal(t, id, "01550ea1-a8c0-7001-8000-000000000000")
 }

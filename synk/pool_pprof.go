@@ -11,7 +11,7 @@ import (
 	"unsafe"
 	"weak"
 
-	"github.com/rs/zerolog/log"
+	"github.com/yusing/goutils/logging"
 	strutils "github.com/yusing/goutils/strings"
 )
 
@@ -110,15 +110,15 @@ func initPoolStats() {
 func printPoolStats() {
 	pruneBuffersInUse()
 
-	log.Info().
-		Str("sizeInUse", strutils.FormatByteSize(sizeInUse.Load())).
-		Uint64("numReused", reused.num.Load()).
-		Str("sizeReused", strutils.FormatByteSize(reused.size.Load())).
-		Uint64("numDropped", dropped.num.Load()).
-		Str("sizeDropped", strutils.FormatByteSize(dropped.size.Load())).
-		Uint64("numNonPooled", nonPooled.num.Load()).
-		Str("sizeNonPooled", strutils.FormatByteSize(nonPooled.size.Load())).
-		Uint64("numGced", gced.num.Load()).
-		Str("sizeGced", strutils.FormatByteSize(gced.size.Load())).
-		Msg("bytes pool stats")
+	logging.Log(logging.Info, "bytes pool stats",
+		logging.Field{Key: "sizeInUse", Value: strutils.FormatByteSize(sizeInUse.Load())},
+		logging.Field{Key: "numReused", Value: reused.num.Load()},
+		logging.Field{Key: "sizeReused", Value: strutils.FormatByteSize(reused.size.Load())},
+		logging.Field{Key: "numDropped", Value: dropped.num.Load()},
+		logging.Field{Key: "sizeDropped", Value: strutils.FormatByteSize(dropped.size.Load())},
+		logging.Field{Key: "numNonPooled", Value: nonPooled.num.Load()},
+		logging.Field{Key: "sizeNonPooled", Value: strutils.FormatByteSize(nonPooled.size.Load())},
+		logging.Field{Key: "numGced", Value: gced.num.Load()},
+		logging.Field{Key: "sizeGced", Value: strutils.FormatByteSize(gced.size.Load())},
+	)
 }

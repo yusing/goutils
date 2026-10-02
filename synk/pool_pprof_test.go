@@ -5,7 +5,7 @@ package synk
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func TestSizeInUse(t *testing.T) {
@@ -13,16 +13,16 @@ func TestSizeInUse(t *testing.T) {
 	before := sizeInUse.Load()
 
 	b := pool.GetAtLeast(2 * MinAllocSize)
-	assert.Equal(t, before+uint64(cap(b)), sizeInUse.Load())
+	expect.Equal(t, sizeInUse.Load(), before+uint64(cap(b)))
 
 	pool.Put(b)
-	assert.Equal(t, before, sizeInUse.Load())
+	expect.Equal(t, sizeInUse.Load(), before)
 
 	b = pool.Get()
 	b = b[:0:1]
 	pool.Put(b)
-	assert.Equal(t, before, sizeInUse.Load(), "return must remove the originally tracked capacity")
+	expect.Equal(t, sizeInUse.Load(), before, "return must remove the originally tracked capacity")
 
 	pool.Put(make([]byte, MinAllocSize))
-	assert.Equal(t, before, sizeInUse.Load(), "foreign buffers must not underflow the metric")
+	expect.Equal(t, sizeInUse.Load(), before, "foreign buffers must not underflow the metric")
 }

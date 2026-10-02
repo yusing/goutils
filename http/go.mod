@@ -1,0 +1,12 @@
+module github.com/yusing/goutils/http
+
+go 1.27.0
+
+replace github.com/yusing/goutils => ..
+
+require (
+	github.com/yusing/goutils v0.7.0
+	golang.org/x/net v0.59.0
+)
+
+require golang.org/x/text v0.42.0 // indirect

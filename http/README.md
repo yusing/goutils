@@ -2,11 +2,32 @@
 
 HTTP utilities for request/response handling, reverse proxy, and WebSocket support.
 
+The package is a separate Go module, `github.com/yusing/goutils/http`. Its
+HTTP/2 dependency is not required by the root utility module. Existing package
+import paths are unchanged; repository consumers use local module replacements
+for development. Reverse-proxy and WebSocket modules remain separate.
+
 ## Overview
 
 The `http` package provides comprehensive HTTP utilities.
 
 ## API Reference
+
+### Request Diagnostics
+
+Configure [`goutils/logging`](../logging/README.md) to receive diagnostics.
+`LogError`, `LogWarn`, `LogInfo`, and `LogDebug` accept a request, message, and
+optional `logging.Field` values. They emit immediately with `remote`, `host`,
+and `uri` fields. Without an installed logger they produce no output.
+
+```go
+httputils.LogError(r, "request failed", logging.Field{Key: "error", Value: err})
+```
+
+These helpers no longer return a zerolog event. Migrate `LogError(r).Msg(message)`
+to `LogError(r, message)` and format `Msgf` messages before calling the helper.
+The separate server, reverse-proxy, and WebSocket modules retain their own logging
+dependencies.
 
 ### Body Reading
 

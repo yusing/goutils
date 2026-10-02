@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func TestGetTestTask(t *testing.T) {
 	t1 := GetTestTask(t)
 	t2 := GetTestTask(t)
-	require.NotNil(t, t1)
-	require.Equal(t, t1, t2)
+	expect.NotNil(t, t1)
+	expect.Equal(t, t2, t1)
 }
 
 func TestChildTaskCancellation(t *testing.T) {
@@ -38,7 +38,7 @@ func TestChildTaskCancellation(t *testing.T) {
 
 	select {
 	case <-child.Context().Done():
-		require.ErrorIs(t, child.Context().Err(), context.Canceled)
+		expect.ErrorIs(t, context.Canceled, child.Context().Err())
 	default:
 		t.Fatal("subTask context was not canceled as expected")
 	}
@@ -83,10 +83,10 @@ func TestTaskOnCancelOnFinished(t *testing.T) {
 		shouldTrueOnFinish = true
 	})
 
-	require.False(t, shouldTrueOnFinish)
+	expect.False(t, shouldTrueOnFinish)
 	task.FinishAndWait(nil)
-	require.True(t, shouldTrueOnCancel)
-	require.True(t, shouldTrueOnFinish)
+	expect.True(t, shouldTrueOnCancel)
+	expect.True(t, shouldTrueOnFinish)
 }
 
 func TestCommonFlowWithGracefulShutdown(t *testing.T) {
@@ -111,19 +111,19 @@ func TestCommonFlowWithGracefulShutdown(t *testing.T) {
 		}
 	}()
 
-	require.NoError(t, gracefulShutdown(1*time.Second))
-	require.True(t, finished)
+	expect.NoError(t, gracefulShutdown(1*time.Second))
+	expect.True(t, finished)
 
-	require.ErrorIs(t, context.Cause(task.Context()), ErrProgramExiting)
-	require.ErrorIs(t, task.Context().Err(), context.Canceled)
-	require.ErrorIs(t, task.FinishCause(), ErrProgramExiting)
+	expect.ErrorIs(t, ErrProgramExiting, context.Cause(task.Context()))
+	expect.ErrorIs(t, context.Canceled, task.Context().Err())
+	expect.ErrorIs(t, ErrProgramExiting, task.FinishCause())
 }
 
 func TestTimeoutOnGracefulShutdown(t *testing.T) {
 	t.Cleanup(testCleanup)
 	_ = RootTask("test", true)
 
-	require.ErrorIs(t, gracefulShutdown(time.Millisecond), context.DeadlineExceeded)
+	expect.ErrorIs(t, context.DeadlineExceeded, gracefulShutdown(time.Millisecond))
 }
 
 func TestFinishMultipleCalls(t *testing.T) {

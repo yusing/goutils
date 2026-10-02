@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 type syncBuffer struct {
@@ -63,7 +63,7 @@ func decodeEvents(t *testing.T, data []byte) []Event {
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		require.NoError(t, err)
+		expect.NoError(t, err)
 		out = append(out, event)
 	}
 	return out
@@ -85,13 +85,13 @@ func TestListenCancelIsIdempotent(t *testing.T) {
 
 	h := NewHistory()
 	current, ch, cancel := h.SnapshotAndListen()
-	require.Len(t, current, 0)
-	require.NotPanics(t, cancel)
-	require.NotPanics(t, cancel)
+	expect.Equal(t, len(current), 0)
+	cancel()
+	cancel()
 
 	select {
 	case _, ok := <-ch:
-		require.False(t, ok)
+		expect.False(t, ok)
 	default:
 		t.Fatalf("listener channel should be closed after cancel")
 	}
@@ -143,29 +143,32 @@ func TestListenJSONNoDuplicateAtBoundary(t *testing.T) {
 
 	h.Add(NewEvent(LevelInfo, "test", "live-1", nil))
 
-	require.Eventually(t, func() bool {
-		events := decodeEvents(t, w.Bytes())
-		return len(events) >= 3
-	}, 2*time.Second, 10*time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(decodeEvents(t, w.Bytes())) < 3 {
+		if !time.Now().Before(deadline) {
+			t.Fatal("listener did not deliver three events within two seconds")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 
 	stop()
 	err := <-errCh
-	require.ErrorIs(t, err, context.Canceled)
+	expect.ErrorIs(t, context.Canceled, err)
 
 	events := decodeEvents(t, w.Bytes())
 	writes := w.Writes()
-	require.Len(t, writes, len(events))
+	expect.Equal(t, len(writes), len(events))
 	for _, write := range writes {
-		require.Truef(t, json.Valid(write), "write is not standalone JSON: %q", write)
+		expect.True(t, json.Valid(write), "write is not standalone JSON: %q", write)
 	}
 
 	actionCount := make(map[string]int, len(events))
 	for _, event := range events {
 		actionCount[event.Action]++
 	}
-	require.Equal(t, 1, actionCount["init-1"])
-	require.Equal(t, 1, actionCount["init-2"])
-	require.Equal(t, 1, actionCount["live-1"])
+	expect.Equal(t, actionCount["init-1"], 1)
+	expect.Equal(t, actionCount["init-2"], 1)
+	expect.Equal(t, actionCount["live-1"], 1)
 }
 
 func TestListenJSONReturnsWriteFailure(t *testing.T) {
@@ -199,7 +202,7 @@ func TestListenJSONReturnsWriteFailure(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := h.ListenJSON(t.Context(), tt.write)
-			require.ErrorIs(t, err, tt.wantErr)
+			expect.ErrorIs(t, tt.wantErr, err)
 		})
 	}
 }
@@ -252,7 +255,7 @@ func TestSnapshotAndListenBoundaryDeliveredOnceUnderContention(t *testing.T) {
 		}
 		cancel()
 
-		require.Equal(t, 1, boundaryCount, "iteration=%d", i)
+		expect.Equal(t, boundaryCount, 1, "iteration=%d", i)
 	}
 }
 
@@ -265,9 +268,9 @@ func TestGetReturnsNewestWindowInOrder(t *testing.T) {
 	}
 
 	events := h.Get()
-	require.Len(t, events, maxHistorySize)
+	expect.Equal(t, len(events), maxHistorySize)
 	for i := range maxHistorySize {
-		require.Equal(t, i+20, events[i].Data)
+		expect.Equal(t, expect.Type[int](t, events[i].Data), i+20)
 	}
 }
 
@@ -284,9 +287,9 @@ func TestGetKeepsGlobalHistoryBoundAcrossCategories(t *testing.T) {
 	}
 
 	events := h.Get()
-	require.Len(t, events, maxHistorySize)
+	expect.Equal(t, len(events), maxHistorySize)
 	for i := range maxHistorySize {
-		require.Equal(t, i+20, events[i].Data)
+		expect.Equal(t, expect.Type[int](t, events[i].Data), i+20)
 	}
 }
 
@@ -315,18 +318,12 @@ func TestGetDoesNotObservePartialAddAll(t *testing.T) {
 			}
 
 			snapshot := h.Get()
-			require.Truef(
-				t,
-				len(snapshot) == 0 || len(snapshot) == len(batch),
-				"attempt=%d observed torn AddAll snapshot len=%d",
-				attempt,
-				len(snapshot),
-			)
+			expect.True(t, len(snapshot) == 0 || len(snapshot) == len(batch), "attempt=%d observed torn AddAll snapshot len=%d", attempt, len(snapshot))
 			runtime.Gosched()
 		}
 
 	nextAttempt:
-		require.Len(t, h.Get(), len(batch))
+		expect.Equal(t, len(h.Get()), len(batch))
 	}
 }
 

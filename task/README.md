@@ -31,6 +31,11 @@ The `task` package provides a structured lifetime management system for Go appli
 - Internal implementation may evolve, preserving public contracts
 - `debug` build tag enables additional logging for development
 
+Shutdown warnings, callback panic diagnostics, and debug lifecycle messages use
+[`goutils/logging`](../logging/README.md). Install an application logger to receive
+them; the default is silent. Task cleanup and panic behavior do not depend on
+whether a logger is installed.
+
 ## Concepts and Terminology
 
 | Term                    | Definition                                                                     |

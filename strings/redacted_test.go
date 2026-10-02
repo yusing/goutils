@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
+	expect "github.com/yusing/goutils/testing"
 )
 
 type testRedacted struct {
@@ -27,16 +27,16 @@ func TestRedacted(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				v := testRedacted{Value: Redacted(tt.input)}
 				got, err := json.Marshal(v)
-				require.NoError(t, err)
-				require.Equal(t, tt.expected, string(got))
+				expect.NoError(t, err)
+				expect.Equal(t, string(got), tt.expected)
 			})
 		}
 	})
 
 	t.Run("unmarshal", func(t *testing.T) {
 		var v testRedacted
-		require.NoError(t, json.Unmarshal([]byte(`{"value": "test"}`), &v))
-		require.Equal(t, "test", v.Value.String())
+		expect.NoError(t, json.Unmarshal([]byte(`{"value": "test"}`), &v))
+		expect.Equal(t, v.Value.String(), "test")
 	})
 }
 

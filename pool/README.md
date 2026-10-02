@@ -224,7 +224,7 @@ func (p *Pool[T]) DisableLog(v bool)
 
 Disables or enables logging of add/remove operations. When `true`, operations are not logged at INFO level.
 
-**Default:** `false` (logging enabled)
+**Default:** `false` (diagnostics forwarded when an application logger is installed)
 
 #### PurgeExpiredTombs
 
@@ -382,7 +382,9 @@ All operations are logged at INFO level unless disabled via `DisableLog`:
 - **Delete**: `"poolname: removed displayname (name)"` or `"poolname: removed name"`
 - **Reload**: `"poolname: reloaded displayname (name)"`
 
-The pool `name` is used as a logger prefix.
+The pool `name` is used as a message prefix. Diagnostics are sent through
+[`goutils/logging`](../logging/README.md); no output is produced until the
+application installs a logger. Event history remains independent of logging.
 
 ### Debug Build
 
@@ -406,7 +408,7 @@ When built with `-tags debug`, the pool logs a warning with stacktrace if a key 
 ## Dependencies
 
 - **github.com/puzpuzpuz/xsync/v4**: Lock-free concurrent map
-- **github.com/rs/zerolog**: Structured logging
+- **goutils/logging**: Framework-neutral diagnostics configured by the application
 
 ## Testing Notes
 

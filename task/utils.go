@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rs/zerolog/log"
 	"github.com/yusing/goutils/intern"
+	"github.com/yusing/goutils/logging"
 )
 
 var ErrProgramExiting = errors.New("program exiting")
@@ -120,7 +120,7 @@ func WaitExit(shutdownTimeout int) {
 	<-sig
 
 	// gracefully shutdown; gracefulShutdown already reported what was left
-	log.Info().Msg("shutting down")
+	logging.Log(logging.Info, "shutting down")
 	_ = gracefulShutdown(time.Second * time.Duration(shutdownTimeout))
 }
 
@@ -144,7 +144,7 @@ func gracefulShutdown(timeout time.Duration) error {
 func invokeWithRecover(cb *Callback) {
 	defer func() {
 		if err := recover(); err != nil {
-			log.Err(fmtCause(err)).Str("callback", cb.about).Msg("panic")
+			logging.Log(logging.Error, "panic", logging.Field{Key: "error", Value: fmtCause(err)}, logging.Field{Key: "callback", Value: cb.about})
 			panicWithDebugStack()
 		}
 	}()

@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
 	. "github.com/yusing/goutils/strings"
+	expect "github.com/yusing/goutils/testing"
 )
 
 func mustParseTime(t *testing.T, layout, value string) time.Time {
@@ -93,9 +93,9 @@ func TestFormatTime(t *testing.T) {
 			result := FormatTimeWithReference(tt.time, now)
 
 			if tt.expectedLength > 0 {
-				require.Len(t, result, tt.expectedLength)
+				expect.Equal(t, len(result), tt.expectedLength)
 			} else {
-				require.Equal(t, tt.expected, result)
+				expect.Equal(t, result, tt.expected)
 			}
 		})
 	}
@@ -182,7 +182,7 @@ func TestFormatDuration(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := FormatDuration(tt.duration)
-			require.Equal(t, tt.expected, result)
+			expect.Equal(t, result, tt.expected)
 		})
 	}
 }
@@ -212,7 +212,7 @@ func TestFormatLastSeen(t *testing.T) {
 			result := FormatLastSeen(tt.time)
 
 			if tt.name == "zero time" {
-				require.Equal(t, tt.expected, result)
+				expect.Equal(t, result, tt.expected)
 			} else if result == "never" { // Just make sure it's not "never", the actual formatting is tested in TestFormatTime
 				t.Errorf("Expected non-zero time to not return 'never', got %s", result)
 			}
@@ -296,7 +296,7 @@ func TestFormatByteSize(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := FormatByteSize(tt.size)
-			require.Equal(t, tt.expected, result)
+			expect.Equal(t, result, tt.expected)
 		})
 	}
 }

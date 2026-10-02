@@ -2,11 +2,13 @@ package gperr
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
+	"reflect"
 	"testing"
 
-	"github.com/stretchr/testify/require"
 	strutils "github.com/yusing/goutils/strings"
+	expect "github.com/yusing/goutils/testing"
 )
 
 var (
@@ -66,7 +68,7 @@ var _ Error = legacyError{}
 
 func TestErrorJSONContract(t *testing.T) {
 	t.Run("nil remains nil", func(t *testing.T) {
-		require.Nil(t, Wrap(nil))
+		expect.Nil(t, Wrap(nil))
 	})
 
 	t.Run("plain error is readable and retains identity", func(t *testing.T) {
@@ -74,33 +76,33 @@ func TestErrorJSONContract(t *testing.T) {
 		err := Wrap(sentinel)
 
 		encoded, marshalErr := strutils.MarshalJSON(err)
-		require.NoError(t, marshalErr)
-		require.JSONEq(t, `"plain error"`, string(encoded))
-		require.ErrorIs(t, err, sentinel)
+		expect.NoError(t, marshalErr)
+		assertJSONEqual(t, `"plain error"`, string(encoded))
+		expect.ErrorIs(t, sentinel, err)
 	})
 
 	t.Run("underlying structured JSON is preserved", func(t *testing.T) {
 		encoded, err := strutils.MarshalJSON(Wrap(structuredJSONError{Kind: "structured"}))
-		require.NoError(t, err)
-		require.JSONEq(t, `{"kind":"structured"}`, string(encoded))
+		expect.NoError(t, err)
+		assertJSONEqual(t, `{"kind":"structured"}`, string(encoded))
 	})
 
 	t.Run("malformed underlying JSON is propagated", func(t *testing.T) {
 		sentinel := errors.New("marshal failed")
 		_, err := strutils.MarshalJSON(Wrap(malformedJSONError{err: sentinel}))
-		require.ErrorIs(t, err, sentinel)
+		expect.ErrorIs(t, sentinel, err)
 	})
 
 	t.Run("unknown future error falls back to readable text", func(t *testing.T) {
 		encoded, err := strutils.MarshalJSON(Wrap(futureJSONError{}))
-		require.NoError(t, err)
-		require.JSONEq(t, `"future error"`, string(encoded))
+		expect.NoError(t, err)
+		assertJSONEqual(t, `"future error"`, string(encoded))
 	})
 
 	t.Run("legacy Error implementations need no JSON method", func(t *testing.T) {
 		encoded, err := strutils.MarshalJSON(Wrap(legacyError{}))
-		require.NoError(t, err)
-		require.JSONEq(t, `"legacy error"`, string(encoded))
+		expect.NoError(t, err)
+		assertJSONEqual(t, `"legacy error"`, string(encoded))
 	})
 
 	t.Run("text marshaling errors are encoded as JSON strings", func(t *testing.T) {
@@ -108,8 +110,8 @@ func TestErrorJSONContract(t *testing.T) {
 		errs.Add(New("unknown field").With(DoYouMean("Header")))
 
 		encoded, err := strutils.MarshalJSON(errs.Error())
-		require.NoError(t, err)
-		require.JSONEq(t, `{
+		expect.NoError(t, err)
+		assertJSONEqual(t, `{
 			"err": "middleware errors",
 			"extras": [{
 				"err": "unknown field",
@@ -120,14 +122,14 @@ func TestErrorJSONContract(t *testing.T) {
 
 	t.Run("JSON-looking marshaled text remains text", func(t *testing.T) {
 		encoded, err := strutils.MarshalJSON(Wrap(textMarshalingError{text: "null"}))
-		require.NoError(t, err)
-		require.JSONEq(t, `"null"`, string(encoded))
+		expect.NoError(t, err)
+		assertJSONEqual(t, `"null"`, string(encoded))
 	})
 
 	t.Run("text marshaling errors are propagated", func(t *testing.T) {
 		sentinel := errors.New("text marshal failed")
 		_, err := strutils.MarshalJSON(Wrap(textMarshalingError{err: sentinel}))
-		require.ErrorIs(t, err, sentinel)
+		expect.ErrorIs(t, sentinel, err)
 	})
 
 	t.Run("joined errors retain every identity and readable diagnostic", func(t *testing.T) {
@@ -136,19 +138,32 @@ func TestErrorJSONContract(t *testing.T) {
 		joined := Join(first, errors.New("second error"))
 
 		encoded, err := strutils.MarshalJSON(joined)
-		require.NoError(t, err)
-		require.Contains(t, string(encoded), "same message")
-		require.Contains(t, string(encoded), "second error")
-		require.ErrorIs(t, joined, first)
-		require.NotErrorIs(t, joined, unrelated)
+		expect.NoError(t, err)
+		expect.StringsContain(t, string(encoded), "same message")
+		expect.StringsContain(t, string(encoded), "second error")
+		expect.ErrorIs(t, first, joined)
+		if errors.Is(joined, unrelated) {
+			t.Fatalf("error %v unexpectedly matches %v", joined, unrelated)
+		}
 	})
 
 	t.Run("multiline errors delegate JSON to their owned error tree", func(t *testing.T) {
 		multiline := Multiline().AddStrings("first", "  second")
 
 		encoded, err := strutils.MarshalJSON(multiline)
-		require.NoError(t, err)
-		require.Contains(t, string(encoded), "first")
-		require.Contains(t, string(encoded), "second")
+		expect.NoError(t, err)
+		expect.StringsContain(t, string(encoded), "first")
+		expect.StringsContain(t, string(encoded), "second")
 	})
+}
+
+// assertJSONEqual compares JSON values independently of object member order and whitespace.
+func assertJSONEqual(t *testing.T, want, got string) {
+	t.Helper()
+	var wantValue, gotValue any
+	expect.NoError(t, jsonv2.Unmarshal([]byte(want), &wantValue))
+	expect.NoError(t, jsonv2.Unmarshal([]byte(got), &gotValue))
+	if !reflect.DeepEqual(gotValue, wantValue) {
+		t.Fatalf("JSON values differ: got %s, want %s", got, want)
+	}
 }
