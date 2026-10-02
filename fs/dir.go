@@ -6,8 +6,8 @@ import (
 	"path"
 )
 
-// Recursively lists all files in a directory until `maxDepth` is reached
-// Returns a slice of file paths relative to `dir`.
+// ListFiles recursively lists files up to maxDepth levels below dir.
+// Results are paths joined to dir. If hideHidden is true, hidden entries are skipped at every level.
 func ListFiles(dir string, maxDepth int, hideHidden ...bool) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -23,7 +23,7 @@ func ListFiles(dir string, maxDepth int, hideHidden ...bool) ([]string, error) {
 			if maxDepth <= 0 {
 				continue
 			}
-			subEntries, err := ListFiles(path.Join(dir, entry.Name()), maxDepth-1)
+			subEntries, err := ListFiles(path.Join(dir, entry.Name()), maxDepth-1, hideHiddenFiles)
 			if err != nil {
 				return nil, err
 			}

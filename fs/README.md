@@ -77,9 +77,8 @@ func ListFiles(dir string, maxDepth int, hideHidden ...bool) ([]string, error)
   with subdirectories expanded where they appear.
 - **Symlinks.** Links are listed as files, even when they point to a directory, and are
   not followed.
-- **Hidden entries.** `ListFiles(dir, n, true)` skips names that start with `.` in `dir`
-  itself. The flag is not passed down, so hidden files and directories inside
-  subdirectories are still listed.
+- **Hidden entries.** `ListFiles(dir, n, true)` skips names that start with `.` at
+  every visited level, including hidden directories and their contents.
 - **Errors.** If `dir`, or any subdirectory that the depth limit lets it enter, cannot be
   read, the call returns `nil` and `error listing directory <path>: <cause>`. The cause is
   wrapped, so `errors.Is(err, os.ErrNotExist)` works. Entries found before the failure are
