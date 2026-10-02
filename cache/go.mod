@@ -1,6 +1,6 @@
 module github.com/yusing/goutils/cache
 
-go 1.27.0
+go 1.27
 
 require (
 	github.com/cenkalti/backoff/v6 v6.0.1

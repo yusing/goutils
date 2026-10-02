@@ -117,7 +117,7 @@ def verify(release_version):
         directory = Path(scratch)
         env = dict(os.environ, GOWORK="off", GOPROXY="direct")
         run("go", "mod", "init", "goutils-release-check", cwd=directory, env=env)
-        run("go", "mod", "edit", "-go=1.27.0", cwd=directory, env=env)
+        run("go", "mod", "edit", "-go=1.27", cwd=directory, env=env)
         for _, metadata in entries:
             run("go", "mod", "edit", f"-require={metadata['Module']['Path']}@{release_version}", cwd=directory, env=env)
         run("go", "test", "-mod=mod", "-run=^$", "-ldflags=-checklinkname=0",

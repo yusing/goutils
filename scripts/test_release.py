@@ -37,11 +37,11 @@ class ReleaseTests(unittest.TestCase):
         self.git("config", "commit.gpgsign", "false")
         self.git("config", "tag.gpgsign", "false")
         self.git("config", "core.hooksPath", str(Path(self.scratch.name) / "no-hooks"))
-        self.write("go.mod", "module example.test/root\n\ngo 1.27.0\n\nrequire (\n"
+        self.write("go.mod", "module example.test/root\n\ngo 1.27\n\nrequire (\n"
                    "\texample.test/root/nested/deep v0.0.1\n"
                    "\texample.test/external v1.2.3\n)\n")
-        self.write("nested/deep/go.mod", "module example.test/root/nested/deep\n\ngo 1.27.0\n")
-        self.write("unused/go.mod", "module example.test/root/unused\n\ngo 1.27.0\n")
+        self.write("nested/deep/go.mod", "module example.test/root/nested/deep\n\ngo 1.27\n")
+        self.write("unused/go.mod", "module example.test/root/unused\n\ngo 1.27\n")
         self.write("go.sum", "existing checksum fixture\n")
         self.write("README.md", "original\n")
         self.git("add", ".")

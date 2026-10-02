@@ -1,6 +1,6 @@
 module github.com/yusing/goutils/server
 
-go 1.27.0
+go 1.27
 
 replace github.com/yusing/goutils => ../
 
