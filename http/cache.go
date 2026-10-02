@@ -142,5 +142,8 @@ func (c Cache) GetBasicAuth(r *http.Request) *Credentials {
 			return nil
 		}
 	}
+	if v == nil {
+		return nil
+	}
 	return v.(*Credentials)
 }

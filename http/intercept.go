@@ -14,7 +14,6 @@
 //
 // This pattern enables preprocessing API responses before returning to the caller,
 // allowing custom response handling without modifying the original API calls.
-// See internal/watcher/health/monitor/docker.go for a complete example.
 package httputils
 
 import (

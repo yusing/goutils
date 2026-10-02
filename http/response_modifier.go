@@ -177,7 +177,7 @@ func (rm *ResponseModifier) BodyBuffer() *bytes.Buffer {
 
 // ResponseModifier should not expose Unwrap because buffered mode must not expose
 // methods such as Flush that would bypass response modification. Passthrough mode
-// intentionally forwards FlushError for streaming responses routed through rules.
+// intentionally forwards FlushError for streaming responses.
 func (rm *ResponseModifier) FlushError() error {
 	if !rm.passthrough {
 		return http.ErrNotSupported

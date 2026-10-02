@@ -250,6 +250,7 @@ parse the same value twice: `GetQueries`, `UpdateQueries`, `GetCookies`,
 `GetSharedData(w)`, which returns the cache owned by the `ResponseModifier` wrapping
 `w` (released by `FlushRelease`). If `w` is not wrapped by a `ResponseModifier`,
 `GetSharedData` returns a fresh empty `Cache` on every call, so nothing is shared.
+`GetBasicAuth` returns nil when credentials are absent, including on repeated calls.
 
 ## Content negotiation and predicates
 
