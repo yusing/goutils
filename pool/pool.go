@@ -13,7 +13,7 @@ import (
 
 const (
 	recentlyRemovedTTL = time.Second
-	tombPurgeThreshold = uint32(256)
+	tombPurgeThreshold = 256
 )
 
 type removedInfo struct {
@@ -28,6 +28,11 @@ type entry[T Object] struct {
 	tomb    bool
 }
 
+type poolState[T Object] struct {
+	m     *xsync.Map[string, entry[T]]
+	tombs atomic.Int64
+}
+
 func displayNameOf(obj Object) string {
 	if withDisp, ok := obj.(ObjectWithDisplayName); ok {
 		return withDisp.DisplayName()
@@ -37,12 +42,11 @@ func displayNameOf(obj Object) string {
 
 type (
 	Pool[T Object] struct {
-		m          *xsync.Map[string, entry[T]]
+		state      atomic.Pointer[poolState[T]]
 		name       string
 		eventKey   string
 		history    *events.History
 		disableLog atomic.Bool
-		tombs      atomic.Uint32
 	}
 	// Preferable allows an object to express deterministic replacement preference
 	// when multiple objects with the same key are added to the pool.
@@ -61,7 +65,9 @@ type (
 )
 
 func New[T Object](name, eventKey string) *Pool[T] {
-	return &Pool[T]{m: xsync.NewMap[string, entry[T]](), name: name, eventKey: eventKey}
+	p := &Pool[T]{name: name, eventKey: eventKey}
+	p.Clear()
+	return p
 }
 
 func (p *Pool[T]) SetEventHistory(history *events.History) {
@@ -81,46 +87,55 @@ func (p *Pool[T]) Add(obj T) {
 }
 
 func (p *Pool[T]) AddKey(key string, obj T) {
-	now := time.Now()
+	s := p.state.Load()
 	action := "added"
-	if cur, exists := p.m.Load(key); exists && !cur.tomb {
-		if newPref, ok := any(obj).(Preferable); ok && !newPref.PreferOver(cur.obj) {
-			// keep existing
-			return
+	var added, replaced bool
+	s.m.Compute(key, func(cur entry[T], exists bool) (entry[T], xsync.ComputeOp) {
+		if exists && !cur.tomb {
+			if newPref, ok := any(obj).(Preferable); ok && !newPref.PreferOver(cur.obj) {
+				return cur, xsync.CancelOp
+			}
+			replaced = true
 		}
-	}
-	p.checkExists(key)
-
-	if cur, exists := p.m.Load(key); exists && cur.tomb {
-		if now.Sub(cur.removed.removedAt) < recentlyRemovedTTL {
-			action = "reloaded"
+		if exists && cur.tomb {
+			if time.Since(cur.removed.removedAt) < recentlyRemovedTTL {
+				action = "reloaded"
+			}
+			s.tombs.Add(-1)
 		}
-		p.tombs.Add(^uint32(0)) // decrement tomb count
+		added = true
+		return entry[T]{obj: obj}, xsync.UpdateOp
+	})
+	if !added {
+		return
 	}
-
-	p.m.Store(key, entry[T]{obj: obj})
+	if replaced {
+		p.logExisting(key)
+	}
 	p.logAction(action, obj)
 }
 
 func (p *Pool[T]) AddIfNotExists(obj T) (actual T, added bool) {
+	s := p.state.Load()
 	key := obj.Key()
-	now := time.Now()
-	cur, exists := p.m.Load(key)
-	if exists {
-		if !cur.tomb {
-			return cur.obj, false
+	action := "added"
+	cur, _ := s.m.Compute(key, func(cur entry[T], exists bool) (entry[T], xsync.ComputeOp) {
+		if exists {
+			if !cur.tomb {
+				return cur, xsync.CancelOp
+			}
+			if time.Since(cur.removed.removedAt) < recentlyRemovedTTL {
+				action = "reloaded"
+			}
+			s.tombs.Add(-1)
 		}
-		if now.Sub(cur.removed.removedAt) < recentlyRemovedTTL {
-			p.tombs.Add(^uint32(0)) // decrement tomb count
-			p.m.Store(key, entry[T]{obj: obj})
-			p.logAction("reloaded", obj)
-			return obj, true
-		}
-		return cur.obj, false
+		added = true
+		return entry[T]{obj: obj}, xsync.UpdateOp
+	})
+	if added {
+		p.logAction(action, obj)
 	}
-	p.m.Store(key, entry[T]{obj: obj})
-	p.logAction("added", obj)
-	return obj, true
+	return cur.obj, added
 }
 
 func (p *Pool[T]) Del(obj T) {
@@ -132,28 +147,31 @@ func (p *Pool[T]) DelKey(key string) {
 }
 
 func (p *Pool[T]) delKey(key string, display string) {
-	cur, exists := p.m.Load(key)
-	if !exists || cur.tomb {
-		return
-	}
-
-	info := removedInfo{
-		removedAt: time.Now(),
-		name:      cur.obj.Name(),
-		display:   display,
-	}
-	if info.display == "" {
-		info.display = displayNameOf(cur.obj)
-	}
-	p.m.Store(key, entry[T]{removed: info, tomb: true})
-	if p.tombs.Add(1) > tombPurgeThreshold {
-		p.PurgeExpiredTombs()
+	s := p.state.Load()
+	var tombs int64
+	s.m.Compute(key, func(cur entry[T], exists bool) (entry[T], xsync.ComputeOp) {
+		if !exists || cur.tomb {
+			return cur, xsync.CancelOp
+		}
+		info := removedInfo{
+			removedAt: time.Now(),
+			name:      cur.obj.Name(),
+			display:   display,
+		}
+		if info.display == "" {
+			info.display = displayNameOf(cur.obj)
+		}
+		tombs = s.tombs.Add(1)
+		return entry[T]{removed: info, tomb: true}, xsync.UpdateOp
+	})
+	if tombs > tombPurgeThreshold {
+		p.purgeExpiredTombs(s)
 	}
 }
 
 func (p *Pool[T]) Get(key string) (T, bool) {
 	var zero T
-	cur, ok := p.m.Load(key)
+	cur, ok := p.state.Load().m.Load(key)
 	if !ok || cur.tomb {
 		return zero, false
 	}
@@ -161,15 +179,16 @@ func (p *Pool[T]) Get(key string) (T, bool) {
 }
 
 func (p *Pool[T]) Size() int {
-	return p.m.Size()
+	return p.state.Load().m.Size()
 }
 
 func (p *Pool[T]) Clear() {
-	p.m.Clear()
+	// In-flight operations retain the old generation, including its tombstone count.
+	p.state.Store(&poolState[T]{m: xsync.NewMap[string, entry[T]]()})
 }
 
 func (p *Pool[T]) Iter(fn func(k string, v T) bool) {
-	for k, v := range p.m.Range {
+	for k, v := range p.state.Load().m.Range {
 		if v.tomb {
 			continue
 		}
@@ -180,8 +199,9 @@ func (p *Pool[T]) Iter(fn func(k string, v T) bool) {
 }
 
 func (p *Pool[T]) Slice() []T {
-	slice := make([]T, 0, p.m.Size()-int(p.tombs.Load()))
-	for _, v := range p.m.Range {
+	s := p.state.Load()
+	slice := make([]T, 0, s.m.Size())
+	for _, v := range s.m.Range {
 		if v.tomb {
 			continue
 		}
@@ -195,7 +215,11 @@ func (p *Pool[T]) Slice() []T {
 
 func (p *Pool[T]) logRemoved(info removedInfo) {
 	if p.history != nil {
-		p.history.Add(events.NewEvent(events.LevelInfo, "pool."+p.eventKey, "removed", info))
+		p.history.Add(events.NewEvent(events.LevelInfo, "pool."+p.eventKey, "removed", struct {
+			Name      string    `json:"name"`
+			Display   string    `json:"display"`
+			RemovedAt time.Time `json:"removed_at"`
+		}{info.name, info.display, info.removedAt}))
 	}
 	if p.disableLog.Load() {
 		return
@@ -224,28 +248,31 @@ func (p *Pool[T]) logAction(action string, obj T) {
 }
 
 func (p *Pool[T]) PurgeExpiredTombs() (purged int) {
+	return p.purgeExpiredTombs(p.state.Load())
+}
+
+func (p *Pool[T]) purgeExpiredTombs(s *poolState[T]) (purged int) {
 	now := time.Now()
-	for k, v := range p.m.Range {
+	for k, v := range s.m.Range {
 		if !v.tomb || now.Sub(v.removed.removedAt) < recentlyRemovedTTL {
 			continue
 		}
 
-		cur, ok := p.m.Load(k)
-		if !ok || !cur.tomb || cur.removed.removedAt != v.removed.removedAt {
-			continue
-		}
-
-		deleted, ok := p.m.LoadAndDelete(k)
-		if !ok {
-			continue
-		}
-		if deleted.tomb && now.Sub(deleted.removed.removedAt) >= recentlyRemovedTTL {
-			p.tombs.Add(^uint32(0))
+		var removed bool
+		var info removedInfo
+		s.m.Compute(k, func(cur entry[T], exists bool) (entry[T], xsync.ComputeOp) {
+			if !exists || !cur.tomb || now.Sub(cur.removed.removedAt) < recentlyRemovedTTL {
+				return cur, xsync.CancelOp
+			}
+			s.tombs.Add(-1)
+			info = cur.removed
+			removed = true
+			return cur, xsync.DeleteOp
+		})
+		if removed {
 			purged++
-			p.logRemoved(deleted.removed)
-			continue
+			p.logRemoved(info)
 		}
-		p.m.Store(k, deleted)
 	}
 	return purged
 }

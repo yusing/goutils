@@ -104,7 +104,7 @@ Optional interfaces:
 | Method | Behavior |
 | --- | --- |
 | `Add(obj)` / `AddKey(key, obj)` | Stores `obj` under `obj.Key()` or the explicit key. A live key is replaced unless `Preferable` says to keep the existing one. A key removed less than 1 s ago is reported as `reloaded`, otherwise as `added`. |
-| `AddIfNotExists(obj) (actual, added)` | Stores `obj` only if its key is free. If a live object holds the key, returns it and `false`. It does not consult `Preferable`. See the limitation below for removed keys. |
+| `AddIfNotExists(obj) (actual, added)` | Stores `obj` only if its key is free. If a live object holds the key, returns it and `false`. It does not consult `Preferable`. Removed keys are treated as absent; recent removals are reported as `reloaded`. |
 | `Get(key) (T, bool)` | The live object, or the zero value and `false`. |
 | `Del(obj)` / `DelKey(key)` | Removes logically. The key stops being visible to `Get`, `Iter`, and `Slice` at once, but an internal tombstone remains. Removing a missing key does nothing. |
 | `Iter(fn func(key string, v T) bool)` | Calls `fn` for every live entry, in no particular order, until `fn` returns false. Concurrent changes may or may not be seen. |
@@ -132,11 +132,11 @@ With `SetEventHistory(h)` the pool adds an event to `h` for every change:
 | Action | `Data` |
 | --- | --- |
 | `added`, `reloaded` | The object itself. |
-| `removed` | An internal record of the removed object. |
+| `removed` | A JSON-encodable record with `name`, `display`, and `removed_at`. |
 
 Events have level `info`, category `"pool." + eventKey`, and the history keeps
 only the newest 100 events across all producers; see
-[`events`](../events/README.md). `Data` holds the pooled value itself. If `T` is a pointer type, later mutations
+[`events`](../events/README.md). For `added` and `reloaded`, `Data` holds the pooled value itself. If `T` is a pointer type, later mutations
 show up in events already recorded, so keep pooled objects effectively immutable. To stream the history as JSON, the objects must
 marshal with `encoding/json/v2`: a struct with no exported fields cannot be
 marshaled and ends the stream with an error.
@@ -151,27 +151,10 @@ All methods are safe for concurrent use, with these exceptions and limits:
 
 - Call `SetEventHistory` during setup, before the pool is shared. It is a plain
   field write.
-- `Add`, `Del`, and `AddKey` are each a read followed by a write, not one atomic
-  step. Two writers for the same key can interleave. Serialize writers per key if
-  you depend on `Preferable` outcomes or exact event order.
-
-## Known limitations
-
-These describe the current implementation. Update this section when they are
-fixed.
-
-- `AddIfNotExists` on a key whose tombstone is older than 1 s but has not been
-  purged returns the zero value and `false` and does not store `obj`. Within 1 s
-  of removal it stores `obj` and reports `reloaded`. Calling `PurgeExpiredTombs`
-  first avoids the stale tombstone.
-- `Clear` does not reset the internal tombstone count. If keys were removed and
-  not yet purged, a later `Slice` call panics (`makeslice: cap out of range`)
-  while the pool holds fewer entries than that stale count. Call `Clear` only when
-  no removals are pending: wait more than 1 s after the last `Del` and call
-  `PurgeExpiredTombs` first.
-- Because `removed` events carry an internal record with no exported fields, a
-  history that contains one cannot be streamed with `History.ListenJSON`: the
-  stream stops at that event with a marshal error.
+- There is no pool-wide mutation lock. Updates and preference checks are atomic per
+  key using the concurrent map. Iteration can still observe concurrent changes.
+- `Clear` atomically replaces the registry. Operations already in flight may finish
+  against the previous registry and emit their logs or events afterward.
 
 ## Build tags
 
