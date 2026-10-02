@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable version for every Go module, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.publish.outputs.commit }}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Require the default branch
+        run: test "$GITHUB_REF" = 'refs/heads/main'
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: '**/go.sum'
+      - name: Prepare internal module versions
+        run: python3 scripts/release.py prepare "$VERSION"
+      - name: Test prepared modules
+        run: python3 scripts/release.py test
+      - name: Test release automation
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Publish version commit and all module tags atomically
+        id: publish
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          python3 scripts/release.py publish "$VERSION"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Create GitHub release
+        run: |
+          if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release create "$VERSION" --verify-tag --generate-notes \
+              --notes "All Go modules are published at $VERSION using directory-prefixed tags for nested modules."
+          fi
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ needs.publish.outputs.commit }}
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: '**/go.sum'
+      - name: Verify public module consumption without local replacements
+        run: python3 scripts/release.py verify "$VERSION"

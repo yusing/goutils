@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  modules:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.modules.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: '**/go.sum'
+      - id: modules
+        run: echo "matrix=$(python3 scripts/release.py modules)" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: modules
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.modules.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: '**/go.sum'
+      - name: Test module and check dependency metadata
+        env:
+          MODULE: ${{ matrix.module }}
+        run: python3 scripts/release.py test --module "$MODULE"
+      - name: Test release automation
+        if: matrix.module == '.'
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
