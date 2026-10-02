@@ -15,8 +15,6 @@ import "github.com/yusing/goutils/env"
 ```
 
 The package name is `env`. It uses only the standard library and needs Go 1.27 or newer.
-The `env/godoxy` subpackage is specific to the GoDoxy server (see
-[GoDoxy server settings](#godoxy-server-settings)).
 
 ## Quick start
 
@@ -78,9 +76,7 @@ prefix, and use `""` to keep the bare name. Calling it with no arguments leaves 
 the bare name. It is not safe for concurrent use.
 
 `LookupEnv(key)` returns the chosen value and whether any candidate was set at all (so
-`("", true)` means the variable exists but is empty everywhere). `LookupEnvSource(key)`
-also returns the name that supplied the value, or an empty source when nothing non-empty
-was found.
+`("", true)` means the variable exists but is empty everywhere).
 
 ## Typed getters
 
@@ -100,45 +96,20 @@ size := env.GetEnv("CACHE_SIZE", int64(1<<20), func(s string) (int64, error) {
 })
 ```
 
-Two details of `GetAddrEnv`: a bare port such as `:8080` gives an empty host and the URL
-`http://:8080`, and IPv6 hosts lose their brackets, so `[::1]:8080` gives the invalid URL
-`http://::1:8080`. Build the URL yourself for those.
+A bare port such as `:8080` gives an empty host and the URL `http://:8080`. IPv6
+URLs keep the required brackets: `[::1]:8080` gives `http://[::1]:8080`.
 
 ## Errors
 
 A value that fails to parse is a configuration error: the getter logs
-`env KEY: invalid bool value` (the key without prefix, and the Go type) with the standard
-`log` package and then panics with the same message. The message never contains the
-offending value, so it is safe for secrets. Read configuration at startup so a bad value
-stops the process early.
-
-## GoDoxy server settings
-
-The `env/godoxy` package defines the GoDoxy server's environment contract on top of this
-package and is not meant for other applications:
-
-- `Definitions()` returns the registry of settings (name, type, default, description,
-  whether it is sensitive, development-only, or a Compose input). The GoDoxy repository
-  generates its `.env.example` and wiki environment table from it. After changing a
-  definition, run `shadowtree gen-env-docs` there; `shadowtree check-env-docs` and CI
-  reject drift.
-- `String`, `Int`, `Duration`, `CommaSep`, `Address`, and `Bool` read a registered setting
-  with the registry's default and panic for a name that is not registered. `Bool` derives
-  `TEST` (also true in Go test executables), `DEBUG` (defaults to `TEST`, an explicit
-  `false` wins), `TRACE` (requires `DEBUG`), and `SERVER_DEBUG` / `WEBSOCKET_DEBUG`
-  (also on when `DEBUG` is explicitly `true`) at runtime.
-- `Inspect()` returns `Diagnostics` for startup logging: each setting with its source and
-  safe value (`[redacted]` for sensitive ones), names of unprefixed variables that
-  supplied a value (`Deprecated`), and unrecognized `GODOXY_` variables (`Unknown`). It
-  never includes the values of sensitive or unknown variables. Call it once after your
-  logger is initialized.
-
-These accessors use the same prefix list as `env`, so `SetPrefixes` affects them too.
-The GoDoxy server still accepts unprefixed names but warns that they are deprecated.
+`env KEY: invalid bool value: VALUE` (the key without prefix, the Go type, and the
+supplied value) with the standard `log` package, then panics with the same message.
+Do not put secrets in malformed typed values: the diagnostic includes them.
+Invalid booleans are intentionally rejected, including `DEBUG=app:*` in importers
+of `server` or `http/websocket`, which read their flags during package initialization.
 
 ## API reference
 
 ```sh
 go doc -all github.com/yusing/goutils/env
-go doc -all github.com/yusing/goutils/env/godoxy
 ```

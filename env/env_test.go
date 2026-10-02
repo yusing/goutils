@@ -194,7 +194,7 @@ func TestGetAddrEnv(t *testing.T) {
 	expect.Equal(t, addr, "[::1]:8080")
 	expect.Equal(t, host, "::1")
 	expect.Equal(t, portInt, 8080)
-	expect.Equal(t, fullURL, "http://::1:8080")
+	expect.Equal(t, fullURL, "http://[::1]:8080")
 
 	// Test invalid address (should panic)
 	os.Setenv(key, "invalid_address")
