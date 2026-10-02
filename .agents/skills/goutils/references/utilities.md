@@ -103,7 +103,8 @@ u, err := getUser(ctx, "42")
 - Refreshes are single-flight per key, and waiting callers do not observe their own context
   deadline.
 - `WithRetries*(n)` allows up to `n+1` calls; exponential backoff has no overall time limit.
-- Keyed caches grow without bound unless `WithMaxEntries` is set. Janitor registrations have
-  no fixed cap but last for the process lifetime, so reuse bounded caches instead of building
-  them per request.
+- Keyed caches grow without bound unless `WithMaxEntries` is set. Reuse bounded caches
+  instead of building them per request. Reloadable owners use `BuildWithRelease()` and call
+  its idempotent release function on shutdown; queued cleanups may finish, but the janitor
+  no longer retains the cache. `Janitor.Remove` releases custom registrations.
 - `-tags debug` logs hits and misses, including summarized cached values, through zerolog.

@@ -11,6 +11,9 @@ of entries. Package name: `cache`.
 go get github.com/yusing/goutils/cache@v0.8.0
 ```
 
+`BuildWithRelease` and `Janitor.Remove` are unreleased additions in this checkout,
+not APIs in v0.8.0. GoDoxy uses them through its local module replacement.
+
 ```go
 import "github.com/yusing/goutils/cache"
 ```
@@ -66,7 +69,7 @@ and `Build()` returns the cached function (`CachedContextFunc[T]` or
 `CachedContextKeyFunc[T, K]`). Builder methods return modified copies, so chain them and
 finish with `Build()`. Build a cache once, at start-up or as a long-lived field, and
 reuse the function: a cache built per request caches nothing across requests, and each
-bounded keyed cache permanently registers with the process-wide janitor (see Limits).
+bounded keyed cache registers with the process-wide janitor (see Limits for release).
 
 ## Behavior
 
@@ -127,10 +130,14 @@ the janitor may trim (default 15 s, minimum 1 s, ignored without `WithMaxEntries
   least recently used entries. The limit is soft: the janitor runs at most once per
   cleanup interval, so the size can exceed `n` until the next pass. A key evicted while
   still wanted is simply recomputed on its next call.
-- The janitor is process-wide with no fixed registration limit. Registrations are
-  never released, so build bounded caches once and reuse them rather than creating
-  them per request. `cache.Janitor` and the `State` interface are exported for custom
-  cleanup states, which have the same process-lifetime ownership.
+- The janitor is process-wide with no fixed registration limit. Build bounded caches
+  once and reuse them rather than creating them per request. For a reloadable owner,
+  use `BuildWithRelease()` and call the returned release function when the owner stops.
+  Release is idempotent and drops the janitor's reference; already queued cleanups and
+  in-flight calls may finish. Do not keep using a released cache, because it no longer
+  receives eviction sweeps. Registration indices are not reused, so small registry
+  metadata remains, but cached values and callbacks are no longer retained by it.
+  Custom `cache.Janitor.Add` registrations can similarly be released with `Remove`.
 
 ## Debug logging
 

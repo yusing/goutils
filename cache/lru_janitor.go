@@ -43,8 +43,7 @@ func newStatesJanitor() *statesJanitor {
 	return j
 }
 
-// Add adds a new state to the janitor. Once the state is added,
-// it cannot be removed. The cleanupInterval is the minimum time
+// Add adds a new state to the janitor. The cleanupInterval is the minimum time
 // between cleanups for this state.
 func (j *statesJanitor) Add(s State, cleanupInterval time.Duration) int {
 	idx := int(j.next.Add(1) - 1)
@@ -73,19 +72,23 @@ func (j *statesJanitor) Add(s State, cleanupInterval time.Duration) int {
 
 func (j *statesJanitor) loadState(idx int) *state {
 	blocks := j.blocks.Load()
-	if idx < 0 || blocks == nil || idx/stateBlockSize >= len(*blocks) {
+	if idx < 0 || int64(idx) >= j.next.Load() || blocks == nil || idx/stateBlockSize >= len(*blocks) {
 		panic(fmt.Sprintf("invalid state index: %d", idx))
 	}
-	s := (*blocks)[idx/stateBlockSize][idx%stateBlockSize].Load()
-	if s == nil {
-		panic(fmt.Sprintf("invalid state index: %d", idx))
-	}
-	return s
+	return (*blocks)[idx/stateBlockSize][idx%stateBlockSize].Load()
+}
+
+// Remove releases the janitor's reference to a state. It is idempotent.
+// Already queued cleanups may still run. Indices are never reused.
+func (j *statesJanitor) Remove(idx int) {
+	j.loadState(idx) // validate the index, including after a previous removal
+	blocks := j.blocks.Load()
+	(*blocks)[idx/stateBlockSize][idx%stateBlockSize].Store(nil)
 }
 
 func (j *statesJanitor) TriggerCleanup(idx int) {
 	state := j.loadState(idx)
-	if !state.pendingCleanup.CompareAndSwap(false, true) {
+	if state == nil || !state.pendingCleanup.CompareAndSwap(false, true) {
 		// already triggered
 		return
 	}

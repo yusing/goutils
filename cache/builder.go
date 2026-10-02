@@ -137,3 +137,15 @@ func (builder CachedKeyFuncBuilder[T, K]) Build() CachedContextKeyFunc[T, K] {
 	state := newCachedContextKeyFuncState(builder)
 	return state.callContext
 }
+
+// BuildWithRelease builds a cache with an idempotent release function for its
+// janitor registration. Call release when the owner is finished with the cache.
+// In-flight calls and cleanups may finish; release does not mutate cached data.
+func (builder CachedKeyFuncBuilder[T, K]) BuildWithRelease() (CachedContextKeyFunc[T, K], func()) {
+	state := newCachedContextKeyFuncState(builder)
+	if state.maxEntries <= 0 {
+		return state.callContext, func() {}
+	}
+	janitor, idx := Janitor, state.janitorIdx
+	return state.callContext, func() { janitor.Remove(idx) }
+}
