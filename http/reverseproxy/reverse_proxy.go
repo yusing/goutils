@@ -34,38 +34,12 @@ import (
 	"golang.org/x/net/http2"
 )
 
-// A ProxyRequest contains a request to be rewritten by a [ReverseProxy].
+// ProxyRequest holds inbound and outbound requests for caller-defined rewriting.
+// ReverseProxy itself does not provide a Rewrite hook.
 type ProxyRequest struct {
-	// In is the request received by the proxy.
-	// The Rewrite function must not modify In.
-	In *http.Request
-
-	// Out is the request which will be sent by the proxy.
-	// The Rewrite function may modify or replace this request.
-	// Hop-by-hop headers are removed from this request
-	// before Rewrite is called.
+	In  *http.Request
 	Out *http.Request
 }
-
-// SetXForwarded sets the X-Forwarded-For, X-Forwarded-Host, and
-// X-Forwarded-Proto headers of the outbound request.
-//
-//   - The X-Forwarded-For header is set to the client IP address.
-//   - The X-Forwarded-Host header is set to the host name requested
-//     by the client.
-//   - The X-Forwarded-Proto header is set to "http" or "https", depending
-//     on whether the inbound request was made on a TLS-enabled connection.
-//
-// If the outbound request contains an existing X-Forwarded-For header,
-// SetXForwarded appends the client IP address to it. To append to the
-// inbound request's X-Forwarded-For header (the default behavior of
-// [ReverseProxy] when using a Director function), copy the header
-// from the inbound request before calling SetXForwarded:
-//
-//	rewriteFunc := func(r *httputil.ProxyRequest) {
-//		r.Out.Header["X-Forwarded-For"] = r.In.Header["X-Forwarded-For"]
-//		r.SetXForwarded()
-//	}
 
 // ReverseProxy is an HTTP Handler that takes an incoming request and
 // sends it to another server, proxying the response back to the
@@ -82,12 +56,8 @@ type ReverseProxy struct {
 	// ModifyResponse is an optional function that modifies the
 	// Response from the backend. It is called if the backend
 	// returns a response at all, with any HTTP status code.
-	// If the backend is unreachable, the optional ErrorHandler is
-	// called before ModifyResponse.
-	//
-	// If ModifyResponse returns an error, ErrorHandler is called
-	// with its error value. If ErrorHandler is nil, its default
-	// implementation is used.
+	// Unreachable backends and ModifyResponse errors are handled internally;
+	// the proxy logs the error and writes its error response.
 	ModifyResponse func(*http.Response) error
 	AccessLogger   accesslog.AccessLogger
 
@@ -297,8 +267,7 @@ func (p *ReverseProxy) errorHandler(rw http.ResponseWriter, r *http.Request, err
 		if _, ok := errors.AsType[tls.RecordHeaderError](err); ok {
 			log.Error().
 				Str("url", reqURL).
-				Msgf(`scheme was likely misconfigured as https,
-						try setting "proxy.%s.scheme" back to "http"`, p.TargetName)
+				Msg("upstream scheme was likely misconfigured as https; try using http")
 			log.Err(err).Msg("underlying error")
 		} else if httputils.IsUnexpectedError(err) {
 			log.Err(err).Str("url", reqURL).Msg("http proxy error")
