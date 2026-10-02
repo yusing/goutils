@@ -56,9 +56,6 @@ var defaultUpgrader = websocket.Upgrader{
 		if h, _, e := net.SplitHostPort(reqHost); e == nil {
 			reqHost = h
 		}
-		if reqHost == "127.0.0.1" || reqHost == "localhost" {
-			return true
-		}
 		reqHost = strings.ToLower(reqHost)
 		return originHost == reqHost
 	},
@@ -176,7 +173,7 @@ func (cm *Manager) PeriodicWrite(interval time.Duration, getData func() (any, er
 		}
 
 		// skip if the data is the same as the last data
-		if equals != nil && equals(data, lastData) {
+		if equals != nil && equals(lastData, data) {
 			return
 		}
 
@@ -232,7 +229,7 @@ func (cm *Manager) WriteJSON(data any, timeout time.Duration) error {
 func (cm *Manager) WriteData(typ int, data []byte, timeout time.Duration) error {
 	select {
 	case <-cm.ctx.Done():
-		return cm.err.Load()
+		return cm.closedError()
 	default:
 		cm.writeLock.Lock()
 		defer cm.writeLock.Unlock()
@@ -243,9 +240,10 @@ func (cm *Manager) WriteData(typ int, data []byte, timeout time.Duration) error 
 		err := cm.conn.WriteMessage(typ, data)
 		if err != nil {
 			if errors.Is(err, websocket.ErrCloseSent) {
-				return cm.err.Load()
+				return cm.closedError()
 			}
-			if errors.Is(err, context.DeadlineExceeded) {
+			timeoutErr, isNetError := errors.AsType[net.Error](err)
+			if errors.Is(err, context.DeadlineExceeded) || (isNetError && timeoutErr.Timeout()) {
 				return ErrWriteTimeout
 			}
 			return err
@@ -265,7 +263,7 @@ func (cm *Manager) ReadCh() <-chan []byte {
 func (cm *Manager) ReadJSON(out any, timeout time.Duration) error {
 	select {
 	case <-cm.ctx.Done():
-		return cm.err.Load()
+		return cm.closedError()
 	case data := <-cm.readCh:
 		return strutils.UnmarshalJSON(data, out)
 	case <-time.After(timeout):
@@ -276,12 +274,19 @@ func (cm *Manager) ReadJSON(out any, timeout time.Duration) error {
 func (cm *Manager) ReadBinary(timeout time.Duration) ([]byte, error) {
 	select {
 	case <-cm.ctx.Done():
-		return nil, cm.err.Load()
+		return nil, cm.closedError()
 	case data := <-cm.readCh:
 		return data, nil
 	case <-time.After(timeout):
 		return nil, ErrReadTimeout
 	}
+}
+
+func (cm *Manager) closedError() error {
+	if err := cm.err.Load(); err != nil {
+		return err
+	}
+	return net.ErrClosed
 }
 
 // Close closes the connection and cancels the context

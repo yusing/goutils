@@ -134,19 +134,9 @@ let the peer send data you do not consume).
 - The text message `ping` is consumed by the heartbeat and never reaches these
   readers.
 
-After the connection ends, `ReadBinary` and `ReadJSON` return the error that ended
-it. For a clean shutdown (the peer sent a normal close frame, the heartbeat lapsed
-without debug mode, or you called `Close`) no error was recorded, so they return
-`nil` with no data (`ReadBinary` returns a `nil` slice and a `nil` error;
-`ReadJSON` leaves `out` untouched). Check `m.Done()` or `m.Context().Err()` after
-a read instead of trusting a `nil` error:
-
-```go
-var in struct{ Text string }
-if err := m.ReadJSON(&in, 30*time.Second); err != nil || m.Context().Err() != nil {
-	return
-}
-```
+After the connection ends, `ReadBinary` and `ReadJSON` return the recorded failure
+or `net.ErrClosed` for a clean shutdown. A successful read therefore always has data
+to decode or a received message (which may be empty).
 
 No read size limit is configured, so an untrusted client can send arbitrarily large
 messages. Put a limit in front of the handler if that matters.
@@ -169,12 +159,11 @@ All writers take a per-call timeout that becomes the write deadline.
 - `(*Manager).PeriodicWrite(interval, get, dedupe...)` runs the same loop on an
   existing manager and returns the error that ended it (`nil` after a clean close).
 
-After the connection has ended, writes return the recorded error, which can be `nil`
-for a clean shutdown (same rule as reads).
+After the connection ends, `WriteData` and `WriteJSON` return the recorded failure
+or `net.ErrClosed` for a clean shutdown.
 
-A write that times out returns an ordinary `net.Error` whose `Timeout()` is true. The
-exported `ErrWriteTimeout` is not returned in practice, so do not compare against it.
-Treat any write error as fatal: gorilla connections cannot be reused after one.
+A write timeout returns `ErrWriteTimeout`. Treat any write error as fatal: gorilla
+connections cannot be reused after one.
 
 ### Deduplication
 
@@ -189,10 +178,8 @@ websocket.PeriodicWrite(c, time.Second, get, func(a, b any) bool {
 })
 ```
 
-The type is declared `func(last, current any) bool`, but the manager calls it as
-`equals(current, last)`: the first argument is the new value and the second is the
-previous one. Use a symmetric comparison, or treat the parameters in that order. Return
-`true` to skip the write.
+`DeduplicateFunc` receives `(last, current)`: the previous value first and the new
+value second. Return `true` to skip the write.
 
 ## Heartbeat
 
@@ -224,13 +211,11 @@ The default upgrader accepts a request when:
 
 - it has no `Origin` header; or
 - the origin parses with a host and its hostname equals the request `Host` hostname,
-  compared case-insensitively and ignoring ports and scheme; or
-- the request `Host` is `localhost` or `127.0.0.1` (any port), in which case every
-  origin is accepted. `[::1]` is not exempt.
+  compared case-insensitively and ignoring ports and scheme.
 
-Anything else gets a 403. The localhost exemption means a server reachable as
-`localhost` accepts cross-site WebSocket requests from any web page the user has
-open, so do not rely on the origin check alone for local services.
+Anything else gets a 403, including cross-host origins on localhost and loopback
+addresses. External reverse proxies must preserve the public Host, or the application
+must supply an explicit custom origin policy.
 
 If the client offers a subprotocol beginning with `csrf.` (`CSRFSecWebSocketProtocolPrefix`),
 the server selects the first such offer and echoes it in `Sec-WebSocket-Protocol`.
@@ -278,11 +263,9 @@ its `EnableCompression` setting. The manager still asks for write compression at
 
 ## Reader adapter
 
-`NewReader()` returns an `io.Reader` that returns one message per `Read`, waiting up
-to 10 seconds. It copies into the caller's buffer without checking its size and
-returns the full message length, so a buffer smaller than the message breaks the
-`io.Reader` contract (callers such as `bufio` panic). Prefer `ReadBinary` or `ReadCh`
-unless the buffer is always large enough.
+`NewReader()` returns an `io.Reader` with a 10-second wait for each new message.
+Small reads preserve the remainder for subsequent calls; empty messages are skipped.
+A clean close returns `io.EOF`, while recorded failures are returned unchanged.
 
 ## Errors and logging
 
@@ -298,15 +281,15 @@ unless the buffer is always large enough.
 
 ## Environment variables
 
-The settings are defined by `goutils/env/godoxy` and read once, when the package is
+The settings are read through `goutils/env` once, when the package is
 initialized. Each name is looked up with the prefixes `GODOXY_`, `GOPROXY_`, and then
 none (for example `GODOXY_WEBSOCKET_DEBUG`, then `WEBSOCKET_DEBUG`):
 
 - `WEBSOCKET_DEBUG` (default `false`). When true, ping lapses and close frames other
   than normal closure and going-away are recorded as errors, so reads and writes return
   them and `PeriodicWrite` reports them instead of ending silently. An explicit
-  `DEBUG=true` enables it too. The `DEBUG` default that is derived for Go test binaries
-  does not, so tests see the quiet behavior unless you set the variable.
+  `DEBUG=true` enables it too (`WEBSOCKET_DEBUG || DEBUG`); test binaries have no
+  special derived default.
 
 A value that is not a Go boolean (for example `DEBUG=app:*`) makes the process panic at
 startup with `env DEBUG: invalid bool value`. Applications that already use `DEBUG`

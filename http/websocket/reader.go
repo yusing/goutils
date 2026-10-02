@@ -1,12 +1,15 @@
 package websocket
 
 import (
+	"errors"
 	"io"
+	"net"
 	"time"
 )
 
 type Reader struct {
 	manager *Manager
+	pending []byte
 }
 
 func (m *Manager) NewReader() io.Reader {
@@ -16,10 +19,20 @@ func (m *Manager) NewReader() io.Reader {
 }
 
 func (r *Reader) Read(p []byte) (int, error) {
-	data, err := r.manager.ReadBinary(10 * time.Second)
-	if err != nil {
-		return 0, err
+	if len(p) == 0 {
+		return 0, nil
 	}
-	copy(p, data)
-	return len(data), nil
+	for len(r.pending) == 0 {
+		data, err := r.manager.ReadBinary(10 * time.Second)
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return 0, io.EOF
+			}
+			return 0, err
+		}
+		r.pending = data
+	}
+	n := copy(p, r.pending)
+	r.pending = r.pending[n:]
+	return n, nil
 }
