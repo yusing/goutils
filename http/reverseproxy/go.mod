@@ -6,8 +6,8 @@ replace github.com/yusing/goutils => ../..
 
 require (
 	github.com/rs/zerolog v1.35.1
-	github.com/yusing/goutils v0.7.0
-	github.com/yusing/goutils/http v0.0.0
+	github.com/yusing/goutils v0.1.0
+	github.com/yusing/goutils/http v0.1.0
 	golang.org/x/net v0.59.0
 )
 
