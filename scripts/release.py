@@ -7,6 +7,9 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from urllib.error import HTTPError
+from urllib.parse import quote
+from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,6 +47,15 @@ def require_unpublished(release_version, entries):
     for tag in tags(release_version, entries):
         if f"refs/tags/{tag}" in refs:
             raise ValueError(f"{tag} is already published; retry failed downstream jobs or choose a new version")
+    for _, metadata in entries:
+        module_path = metadata["Module"]["Path"]
+        lookup = f"https://sum.golang.org/lookup/{quote(module_path, safe='/')}@{release_version}"
+        try:
+            with urlopen(lookup, timeout=20):
+                raise ValueError(f"{module_path}@{release_version} is permanently recorded in Go's checksum database; choose a new version")
+        except HTTPError as error:
+            if error.code != 404:
+                raise RuntimeError(f"could not check Go publication history for {module_path}: HTTP {error.code}") from error
 
 
 def prepare(release_version):

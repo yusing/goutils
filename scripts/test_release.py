@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 
 
 SPEC = importlib.util.spec_from_file_location("release", Path(__file__).with_name("release.py"))
@@ -54,6 +55,7 @@ class ReleaseTests(unittest.TestCase):
         self.list_override = {}
         self.start_patch(mock.patch.object(release, "ROOT", self.repo))
         self.start_patch(mock.patch.object(release, "run", side_effect=self.mock_run))
+        self.urlopen = self.start_patch(mock.patch.object(release, "urlopen", side_effect=self.not_recorded))
         self.start_patch(mock.patch("sys.stdout", new=io.StringIO()))
 
     def start_patch(self, patcher):
@@ -110,6 +112,63 @@ class ReleaseTests(unittest.TestCase):
 
     def remote_refs(self):
         return self.git("for-each-ref", "--format=%(refname) %(objectname)", cwd=self.remote)
+
+    def not_recorded(self, url, timeout):
+        error = HTTPError(url, 404, "Not Found", {}, io.BytesIO())
+        self.addCleanup(error.close)
+        raise error
+
+    def snapshot(self):
+        return (self.remote_refs(), self.git("rev-parse", "HEAD"),
+                self.git("tag", "--list"), self.git("status", "--porcelain"),
+                {path: path.read_bytes() for path in self.repo.rglob("go.mod")})
+
+    def test_checksum_history_404_allows_prepare_and_publish(self):
+        release.prepare("v0.8.0")
+        release.publish("v0.8.0")
+        self.assertEqual(self.git("rev-parse", "main", cwd=self.remote), self.git("rev-parse", "HEAD"))
+        self.assertEqual([call.args[0] for call in self.urlopen.call_args_list],
+                         [f"https://sum.golang.org/lookup/{path}@v0.8.0"
+                          for _ in range(2)
+                          for path in ("example.test/root", "example.test/root/nested/deep",
+                                       "example.test/root/unused")])
+        self.assertTrue(all(call.kwargs == {"timeout": 20} for call in self.urlopen.call_args_list))
+        for tag in ("v0.8.0", "nested/deep/v0.8.0", "unused/v0.8.0"):
+            self.assertEqual(self.git("rev-parse", f"{tag}^{{}}", cwd=self.remote),
+                             self.git("rev-parse", "HEAD"))
+
+    def test_recorded_checksum_version_blocks_prepare_and_publish_without_git_tags(self):
+        for module_path in ("example.test/root", "example.test/root/nested/deep"):
+            with self.subTest(module_path=module_path):
+                def lookup(url, timeout):
+                    if url.endswith(f"/{module_path}@v0.8.0"):
+                        return io.BytesIO(b"recorded checksum entry")
+                    return self.not_recorded(url, timeout)
+
+                self.urlopen.side_effect = lookup
+                before = self.snapshot()
+                self.assertEqual(self.git("tag", "--list"), "")
+                for action in (release.prepare, release.publish):
+                    with self.assertRaisesRegex(ValueError, "permanently recorded"):
+                        action("v0.8.0")
+                    self.assertEqual(self.snapshot(), before)
+
+    def test_checksum_http_errors_abort_prepare_and_publish_without_mutations(self):
+        for status in (403, 429, 500, 503):
+            with self.subTest(status=status):
+                def lookup(url, timeout):
+                    error = HTTPError(url, status, "Unavailable", {}, io.BytesIO())
+                    self.addCleanup(error.close)
+                    raise error
+
+                self.urlopen.side_effect = lookup
+                before = self.snapshot()
+                for action in (release.prepare, release.publish):
+                    with self.assertRaisesRegex(RuntimeError, f"HTTP {status}") as raised:
+                        action("v0.8.0")
+                    self.assertIsInstance(raised.exception.__cause__, HTTPError)
+                    self.assertEqual(raised.exception.__cause__.code, status)
+                    self.assertEqual(self.snapshot(), before)
 
     def test_discovery_ignores_untracked_and_ignored_modules(self):
         self.write("untracked/go.mod", "module example.test/untracked\n")

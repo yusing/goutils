@@ -8,7 +8,7 @@ library.
 ## Use a Package
 
 ```sh
-go get github.com/yusing/goutils@v0.1.0
+go get github.com/yusing/goutils@v0.8.0
 ```
 
 Import the package you need, such as `github.com/yusing/goutils/strings` or
@@ -19,7 +19,7 @@ HTTP and other dependency-heavy packages are separate modules with unchanged
 package import paths. Add their module when needed:
 
 ```sh
-go get github.com/yusing/goutils/http@v0.1.0
+go get github.com/yusing/goutils/http@v0.8.0
 ```
 
 | Module suffix | Purpose |
@@ -62,17 +62,19 @@ Maintainers publish all modules at one stable version through the Release
 workflow. Supported versions are `v0.x.y` and `v1.x.y`.
 
 ```sh
-gh workflow run release.yml --repo yusing/goutils --ref main -f version=v0.1.0
+gh workflow run release.yml --repo yusing/goutils --ref main -f version=v0.8.0
 ```
 
 The workflow updates internal module dependency versions, validates the prepared
 source, and commits the module metadata to main. It atomically pushes that commit
 and all module tags, then creates a GitHub release and verifies public consumption
-without local replacements. Root tags are `v0.1.0`; nested tags include the module
-directory, such as `http/v0.1.0`. Actions needs permission to write repository
+without local replacements. Root tags are `v0.8.0`; nested tags include the module
+directory, such as `http/v0.8.0`. Actions needs permission to write repository
 contents; no additional release secret is required.
 
-Run releases from main. A published version cannot be reused or overwritten.
+Run releases from main. A published version cannot be reused or overwritten, even if its Git tag was
+deleted. The workflow checks both existing tags and Go's permanent checksum
+database before preparing a version.
 If validation or the atomic push fails before publication, rerun the workflow.
 If release creation or public-consumption verification fails after tags are
 published, rerun only the failed jobs of that run. Do not dispatch the same
