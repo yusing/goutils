@@ -8,18 +8,17 @@ of entries. Package name: `cache`.
 ## Install
 
 ```sh
-go get github.com/yusing/goutils/cache@v0.8.0
+go get github.com/yusing/goutils/cache@v0.9.1
 ```
 
-`BuildWithRelease` and `Janitor.Remove` are unreleased additions in this checkout,
-not APIs in v0.8.0. GoDoxy uses them through its local module replacement.
+GoDoxy uses this checkout through its local module replacement.
 
 ```go
 import "github.com/yusing/goutils/cache"
 ```
 
 - Go 1.27. The module is self-contained: it does not depend on the root
-  `github.com/yusing/goutils` module. It requires `github.com/cenkalti/backoff/v5` and
+  `github.com/yusing/goutils` module. It requires `github.com/cenkalti/backoff/v6` and
   `github.com/puzpuzpuz/xsync/v4`; zerolog is linked only with the `debug` build tag.
 - No linker flags, environment variables, or logging unless built with `-tags=debug`.
 
@@ -111,7 +110,7 @@ without locking.
 `WithRetriesZeroBackoff(n)` retry a failed refresh up to `n` more times (`n = 2` means
 at most three calls). Without one of them there are no retries.
 
-- Exponential backoff uses the `backoff/v5` defaults: 500 ms initial delay with 50
+- Exponential backoff uses the `backoff/v6` defaults: 500 ms initial delay with 50
   percent jitter, growing by 1.5 each time up to 60 s, with no overall time limit. Bound
   it with a context deadline.
 - Retries stop as soon as the context is done and return `context.Cause(ctx)`.

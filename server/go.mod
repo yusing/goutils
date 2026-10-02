@@ -6,7 +6,7 @@ replace github.com/yusing/goutils => ../
 
 require (
 	github.com/pires/go-proxyproto v0.15.0
-	github.com/quic-go/quic-go v0.62.0
+	github.com/quic-go/quic-go v0.63.0
 	github.com/rs/zerolog v1.35.1
 	github.com/samber/slog-zerolog/v2 v2.9.2
 	github.com/yusing/goutils v0.9.1
