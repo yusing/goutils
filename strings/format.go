@@ -3,17 +3,14 @@ package strutils
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"time"
 )
 
-// AppendDuration appends a duration to a buffer with the following format:
-//   - 1 ns
-//   - 1 ms
-//   - 1 seconds
-//   - 1 minutes and 1 seconds
-//   - 1 hours, 1 minutes and 1 seconds
-//   - 1 days, 1 hours and 1 minutes (ignore seconds if days >= 1)
+// AppendDuration appends a human-readable duration, for example "1 ns",
+// "1 ms", "1 second", "1 minute and 1 second", or "1 day, 1 hour and 1 minute".
+// Seconds are omitted for durations of at least one hour. Zero is "0 Seconds".
 func AppendDuration(d time.Duration, buf []byte) []byte {
 	if d < 0 {
 		buf = append(buf, '-')
@@ -94,9 +91,6 @@ func appendRound(f float64, buf []byte) []byte {
 
 func appendFloat(f float64, buf []byte) []byte {
 	f = math.Round(f*100) / 100
-	if f == 0 {
-		return buf
-	}
 	return strconv.AppendFloat(buf, f, 'f', -1, 64)
 }
 
@@ -185,12 +179,12 @@ func AppendByteSize[T ~int | ~uint | ~int64 | ~uint64 | ~float64](size T, buf []
 	)
 	switch {
 	case size < kb:
-		switch any(size).(type) {
-		case int, int64:
+		switch reflect.TypeFor[T]().Kind() {
+		case reflect.Int, reflect.Int64:
 			buf = strconv.AppendInt(buf, int64(size), 10)
-		case uint, uint64:
+		case reflect.Uint, reflect.Uint64:
 			buf = strconv.AppendUint(buf, uint64(size), 10)
-		case float64:
+		case reflect.Float64:
 			buf = appendFloat(float64(size), buf)
 		}
 		buf = append(buf, []byte(" B")...)

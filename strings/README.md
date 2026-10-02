@@ -69,7 +69,7 @@ hu*********et
 | `ToLowerNoSnake(s)` | Removes `_` and lowercases ASCII letters: `Foo_Bar` gives `foobar`. |
 | `LevenshteinDistance(a, b)` | Edit distance computed over **bytes**, so each non-ASCII character counts as several edits. |
 | `Pluralize(n)` | `"s"` when `n > 1`, otherwise `""`. |
-| `NewUUIDv7()` | See [UUIDs](#uuids). |
+| `NewUUIDv7()` | Deprecated: use `uuid.NewV7().String()` from the standard library. See [UUIDs](#uuids). |
 
 ## Formatting durations, sizes, and times
 
@@ -101,9 +101,7 @@ units (`B`, `KiB`, `MiB`, `GiB`, `TiB`, `PiB`) with up to two decimals:
 | `1536000` | `1.46 MiB` |
 | `5 << 40` | `5 TiB` |
 
-Two edge cases to avoid: a `float64` below 0.005 (including `0.0`) prints without its
-number (`" B"`), and a named type such as `type Bytes int64` loses its number below 1 KiB.
-Convert to `int64` first.
+Named types with these underlying types are supported too. Zero prints `0 B`.
 
 `FormatTimeWithReference(t, ref)` describes `t` relative to `ref`. `FormatTime(t)` uses
 `time.Now()` as the reference, `FormatUnixTime(sec)` takes Unix seconds, and
@@ -140,18 +138,16 @@ Go's v2 defaults differ from `encoding/json` v1 in ways that affect stored data:
   libraries.
 
 `NewJSONEncoder(w).Encode(v)` writes a trailing newline and does not escape HTML unless
-you call `SetEscapeHTML(true)`. Calling `SetIndent` makes `Encode` fail with `cannot change
-whitespace formatting within a MarshalEncode call`; use `MarshalJSONIndent` for indented
-output.
+you call `SetEscapeHTML(true)`. `SetIndent(prefix, indent)` enables indented output;
+both strings must contain only spaces or tabs. `SetIndent("", "")` restores compact output.
 
 ## Redacting secrets
 
-`Redact(s)` masks the middle of a string for display: the first two and last two bytes
-stay visible and the rest becomes `*`. Values of four bytes or fewer keep only the first
-and last byte (`"abcd"` gives `a**d`), which for one or two characters reveals the whole
-value (`"ab"` gives `a**b`). It works on bytes, so a multi-byte character at either edge
-can be cut in half; marshaling such a `Redacted` value to JSON then fails with `invalid
-UTF-8`.
+`Redact(s)` masks the middle of a string using Unicode character boundaries.
+For more than four characters, the first two and last two stay visible and the
+rest becomes `*`. Three or four characters keep only the first and last
+(`"abcd"` gives `a**d`); one or two characters are fully masked (`"ab"` gives `**`).
+Empty strings stay empty.
 
 `Redacted` is a `string` type that applies `Redact` when marshaled to JSON or YAML. It
 stores the real value, so `String()` and `fmt` verbs print it unmasked:
@@ -276,13 +272,11 @@ strutils.IsValidFilename("../secret")    // false
 
 ## UUIDs
 
-`NewUUIDv7()` returns a UUID string with the version 7 layout: a 48-bit millisecond
-timestamp, then a process-wide 12-bit counter. Apart from the version and variant bits,
-the rest is zero. IDs sort by creation time and are unique within one process (the
-counter wraps every 4096 IDs, so more than 4096 IDs in one millisecond can repeat), but
-they contain no randomness: two processes can generate the same ID, and an ID is not a
-secret. Time comes from `mockable.TimeNow`, so tests can fix it
-with `mockable.MockTimeNow`.
+`NewUUIDv7()` is deprecated. Use `uuid.NewV7().String()` from the standard library
+directly. The compatibility wrapper returns an RFC 9562 version 7 UUID using Go's `uuid.NewV7`: a
+millisecond timestamp plus cryptographically random bits. UUIDs are time-ordered
+and suitable for collision-resistant identifiers across processes, not secrets.
+The clock comes from the standard library, not `mockable.TimeNow`.
 
 ## API reference
 

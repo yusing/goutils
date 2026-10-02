@@ -5,8 +5,7 @@ import (
 	"unicode"
 )
 
-// CommaSeperatedList returns a list of strings split by commas,
-// then trim spaces from each element.
+// CommaSeperatedList splits s on commas and Unicode whitespace, omitting empty fields.
 func CommaSeperatedList(s string) []string {
 	if s == "" {
 		return []string{}

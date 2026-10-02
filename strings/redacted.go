@@ -47,28 +47,19 @@ func (r *Redacted) UnmarshalYAML(data []byte) error {
 }
 
 func Redact(s string) string {
-	n := len(s)
+	runes := []rune(s)
+	n := len(runes)
 	if n == 0 {
 		return ""
 	}
+	if n <= 2 {
+		return asterisks[:n]
+	}
 	if n <= 4 {
-		return s[:1] + "**" + s[n-1:]
+		return string(runes[:1]) + "**" + string(runes[n-1:])
 	}
 	if n-4 <= numAsterisks {
-		return s[:2] + asterisks[:n-4] + s[n-2:]
+		return string(runes[:2]) + asterisks[:n-4] + string(runes[n-2:])
 	}
-	return redactLong(s, n)
-}
-
-func redactLong(s string, n int) string {
-	var b strings.Builder
-	b.Grow(n)
-	b.WriteString(s[:2])
-	for remaining := n - 4; remaining > 0; {
-		chunk := min(remaining, numAsterisks)
-		b.WriteString(asterisks[:chunk])
-		remaining -= chunk
-	}
-	b.WriteString(s[n-2:])
-	return b.String()
+	return string(runes[:2]) + strings.Repeat("*", n-4) + string(runes[n-2:])
 }

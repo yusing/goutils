@@ -43,7 +43,7 @@ func (e *jsonEncoder) Encode(v any) error {
 	if e.escapeHTML {
 		opts = append(opts, jsontext.EscapeForHTML(true))
 	}
-	return jsonv2.MarshalEncode(jsontext.NewEncoder(e.w), v, opts...)
+	return jsonv2.MarshalEncode(jsontext.NewEncoder(e.w, opts...), v, jsonOpts)
 }
 
 func (e *jsonEncoder) SetEscapeHTML(escape bool) {

@@ -5,10 +5,10 @@ import (
 	"strings"
 )
 
-// SanitizeURI sanitizes a URI reference to ensure it is safe
+// SanitizeURI returns http(s) URLs unchanged and sanitizes other URI references.
 // It disallows URLs beginning with // or /\ as absolute URLs,
 // cleans the URL path to remove any .. or . path elements,
-// and ensures the URL starts with a / if it doesn't already
+// and ensures the URL starts with a / if it doesn't already.
 func SanitizeURI(uri string) string {
 	if uri == "" {
 		return "/"

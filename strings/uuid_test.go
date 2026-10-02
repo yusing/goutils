@@ -2,19 +2,32 @@ package strutils_test
 
 import (
 	"testing"
-	"time"
+	"uuid"
 
-	"github.com/yusing/goutils/mockable"
 	. "github.com/yusing/goutils/strings"
-	expect "github.com/yusing/goutils/testing"
 )
 
 func TestNewUUIDv7(t *testing.T) {
-	mockable.TimeNow = func() time.Time {
-		t, _ := time.Parse(time.RFC3339Nano, "2016-06-02T01:02:03.456000000Z")
-		return t
+	seen := make(map[string]bool)
+	hasRandomTail := false
+	for range 128 {
+		id := NewUUIDv7()
+		parsed, err := uuid.Parse(id)
+		if err != nil {
+			t.Fatalf("invalid UUID %q: %v", id, err)
+		}
+		for _, b := range parsed[9:] {
+			hasRandomTail = hasRandomTail || b != 0
+		}
+		if len(id) != 36 || id[14] != '7' || (id[19] != '8' && id[19] != '9' && id[19] != 'a' && id[19] != 'b') {
+			t.Fatalf("not an RFC 9562 version 7 UUID: %q", id)
+		}
+		if seen[id] {
+			t.Fatalf("duplicate UUID: %s", id)
+		}
+		seen[id] = true
 	}
-
-	id := NewUUIDv7()
-	expect.Equal(t, id, "01550ea1-a8c0-7001-8000-000000000000")
+	if !hasRandomTail {
+		t.Fatal("all UUID random tails are zero, as in the old deterministic generator")
+	}
 }
