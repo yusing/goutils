@@ -72,7 +72,7 @@ type Pool interface {
 | Call | Behavior |
 | --- | --- |
 | `New(ctx, opts...)` | Creates a pool. A nil `ctx` becomes `context.Background()`. The default limit is `runtime.GOMAXPROCS(0)` at creation time. |
-| `WithN(n)` | Limits concurrency to `n`, which must be at least 1. `n < 1` is not validated: `0` makes `Go` block until the context ends and never run anything, and a negative value panics in `New`. |
+| `WithN(n)` | Limits concurrency to `n`, which must be at least 1. `New` panics with a worker-count error when `n < 1`. |
 | `Go(fn)` | Blocks until a slot is free, then runs `fn` on a new goroutine and returns. A nil `fn` is ignored. |
 | `Wait()` | Blocks until every started function has returned. The pool can be used again afterwards. |
 
@@ -96,7 +96,5 @@ type Pool interface {
   or a channel. If you want first-error cancellation, use `errgroup` with
   `SetLimit`.
 - Concurrency. `Go` may be called from several goroutines, and work submitted
-  while `Wait` is waiting delays it. Call `Wait` from one goroutine at a time:
-  each `Wait` holds the slots it has collected until it has all of them, so
-  concurrent `Wait` calls can block each other indefinitely. Ending the context
-  releases them.
+  while `Wait` is waiting delays it. Concurrent `Wait` calls are safe and are serialized; each returns once
+  all slots are idle or the pool context ends.

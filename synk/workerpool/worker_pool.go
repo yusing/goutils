@@ -3,6 +3,7 @@ package workerpool
 import (
 	"context"
 	"runtime"
+	"sync"
 	"sync/atomic"
 )
 
@@ -15,9 +16,10 @@ type Pool interface {
 }
 
 type pool struct {
-	ctx  context.Context
-	sem  chan struct{}
-	next atomic.Int64
+	ctx    context.Context
+	sem    chan struct{}
+	next   atomic.Int64
+	waitMu sync.Mutex
 }
 
 type options struct {
@@ -26,6 +28,7 @@ type options struct {
 
 type option func(opts *options)
 
+// WithN sets the maximum number of concurrent workers. New panics if n is not positive.
 func WithN(n int) option {
 	return func(opts *options) {
 		opts.n = n
@@ -39,6 +42,9 @@ func New(ctx context.Context, opts ...option) Pool {
 	}
 	for _, opt := range opts {
 		opt(&wopts)
+	}
+	if wopts.n <= 0 {
+		panic("workerpool: worker count must be positive")
 	}
 
 	if ctx == nil {
@@ -77,6 +83,8 @@ func (p *pool) Go(fn func(ctx context.Context, idx int)) {
 }
 
 func (p *pool) Wait() {
+	p.waitMu.Lock()
+	defer p.waitMu.Unlock()
 	n := cap(p.sem)
 	acquired := 0
 	for range n {
