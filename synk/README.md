@@ -206,10 +206,7 @@ implementations. Use a pointer or struct type, or wrap the interface in a struct
 | `pprof` | Starts a reporter at package initialization that logs `bytes pool stats` at `Info` every 5 seconds, with fields `sizeInUse`, `numReused`, `numDropped`, `numNonPooled`, `numGced`, and the matching `size*` fields. Messages go through [`logging`](../logging/README.md) and appear only when the application installed a logger. |
 | `race` | Selected automatically by `-race`. The typed pools use locked shared queues and no private slot so the race detector can check them. Behavior is otherwise the same. |
 
-With `pprof`, the reporter calls `signal.Notify` for `os.Interrupt` at startup and
-never stops it. A program that has no SIGINT handler of its own, such as a
-program that does not use `task.WaitExit`, is no longer terminated by Ctrl-C.
-Install your own handler, or avoid the tag in such programs.
+The `pprof` reporter does not install a signal handler, so Ctrl-C retains its normal behavior.
 
 ## Compatibility
 

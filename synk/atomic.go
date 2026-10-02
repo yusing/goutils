@@ -21,7 +21,7 @@ func (a *Value[T]) Load() T {
 }
 
 // Store sets the value of the [Value] v to val.
-// Setting a nil value will panic.
+// A nil interface or a different concrete type than the first stored value panics.
 func (a *Value[T]) Store(v T) {
 	a.Value.Store(v)
 }

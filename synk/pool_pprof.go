@@ -3,8 +3,6 @@
 package synk
 
 import (
-	"os"
-	"os/signal"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -93,16 +91,8 @@ func initPoolStats() {
 		statsTicker := time.NewTicker(5 * time.Second)
 		defer statsTicker.Stop()
 
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, os.Interrupt)
-
-		for {
-			select {
-			case <-sig:
-				return
-			case <-statsTicker.C:
-				printPoolStats()
-			}
+		for range statsTicker.C {
+			printPoolStats()
 		}
 	}()
 }
