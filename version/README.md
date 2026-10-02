@@ -97,13 +97,11 @@ the format above, such as a branch name, also gives `v0.0.0`.
 | `IsNewerThan(o)` | newer by generation, then major, then minor |
 | `IsNewerThanMajor(o)` | newer by generation or major; minor is ignored |
 | `IsOlderThanMajor(o)` | older by generation or major; minor is ignored |
-| `IsOlderThan(o)` | **not** newer than `o`, so also true for equal versions |
-| `IsOlderMajorThan(o)` | **not** newer by generation or major, so also true when those are equal |
+| `IsOlderThan(o)` | strictly older by generation, then major, then minor |
+| `IsOlderMajorThan(o)` | strictly older by generation or major; minor is ignored |
 
-`IsOlderThan` and `IsOlderMajorThan` are the negations of the `IsNewer*` methods, not
-strict comparisons: comparing a version with an equal one, `IsOlderThan` is `true` while
-`IsOlderThanMajor` is `false`. For a strict "older" test on all three numbers, use
-`o.IsNewerThan(v)`.
+All older/newer comparisons are strict. `IsOlderMajorThan` and `IsOlderThanMajor`
+have the same behavior; equal generation and major values are neither older nor newer.
 
 ## Text and JSON
 

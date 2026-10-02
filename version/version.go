@@ -62,7 +62,7 @@ func (v Version) IsNewerThanMajor(other Version) bool {
 }
 
 func (v Version) IsOlderThan(other Version) bool {
-	return !v.IsNewerThan(other)
+	return other.IsNewerThan(v)
 }
 
 func (v Version) IsOlderThanMajor(other Version) bool {
@@ -73,7 +73,7 @@ func (v Version) IsOlderThanMajor(other Version) bool {
 }
 
 func (v Version) IsOlderMajorThan(other Version) bool {
-	return !v.IsNewerThanMajor(other)
+	return other.IsNewerThanMajor(v)
 }
 
 func (v Version) IsEqual(other Version) bool {
