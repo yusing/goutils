@@ -110,10 +110,8 @@ for _, r := range routes.Slice() { ... }        // sorted by Name()
   `PurgeExpiredTombs`).
 - Add/remove diagnostics go through `logging` at Info unless `DisableLog(true)`; events are still
   recorded.
-- Known defects: `Slice` can panic after `Del` followed by `Clear` (the tombstone counter is not
-  reset); `AddIfNotExists` does not store over an expired but unpurged tombstone; and "removed"
-  events carry unexported data that makes `History.ListenJSON` stop with an encoding error. Check
-  `pool/README.md` for the current list before relying on these paths.
+- `AddIfNotExists` treats tombstones as absent; `Clear` drops them too. Removed events carry
+  JSON-encodable `name`, `display`, and `removed_at` fields.
 
 ## events: in-process event history
 
@@ -177,5 +175,5 @@ wp.Wait()
 - `Go` blocks while all slots are busy. After `ctx` is canceled it usually drops the work, and
   `Wait` returns early without waiting for running workers.
 - Panics in workers are not recovered, the `idx` argument is a running call counter (not a slot
-  number), and `WithN(0)` makes `Go` block forever. Call `Wait` from one goroutine only.
+  number). `New` rejects `WithN(n)` for `n < 1` with a panic; concurrent `Wait` calls are safe.
 - Prefer `errgroup` when you need errors or first-error cancellation.

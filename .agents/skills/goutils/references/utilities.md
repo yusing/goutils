@@ -9,8 +9,8 @@ the full API.
 - JSON helpers wrap `encoding/json/v2`: `MarshalJSON`, `UnmarshalJSON`, `MarshalJSONIndent`,
   `MarshalString`, `UnmarshalFromString`, `NewJSONEncoder`/`NewJSONDecoder`, `ValidJSON`. Expect
   v2 semantics: case-sensitive field names, a nil slice encodes as `[]` and a nil map as `{}`,
-  duplicate names are an error, and `time.Duration` is nanoseconds. Calling `SetIndent` on
-  `NewJSONEncoder` makes `Encode` fail; use `MarshalJSONIndent` instead.
+  duplicate names are an error, and `time.Duration` is nanoseconds. `SetIndent` configures
+  streaming indentation using spaces/tabs; `SetIndent("", "")` restores compact output.
 - `MarshalYAML`/`UnmarshalYAML` panic until the application installs a YAML library with
   `SetYAMLMarshaler` and `SetYAMLUnmarshaler`.
 - Human-readable formatting: `FormatDuration` (drops seconds at one hour or more),
@@ -22,11 +22,12 @@ the full API.
 - `CommaSeperatedList` (the misspelling is the real name) splits on commas and on whitespace.
 - `Redacted` is a string type for secrets in config: it masks in JSON and YAML output (YAML masking
   needs a library that honors `MarshalYAML() ([]byte, error)`, such as goccy/go-yaml), while
-  `String()` and `fmt` print the real value. `Redact` reveals values of four bytes or fewer.
+  `String()` and `fmt` print the real value. `Redact` uses Unicode boundaries and fully masks
+  one- and two-character values.
 - `SanitizeURI` cleans relative redirect targets (returns http(s) URLs unchanged);
   `IsValidFilename` rejects only `/`, `\`, and `..`, so do not use it alone for path safety.
-- `NewUUIDv7` has no random bits; use a random UUID library where collision resistance across
-  processes matters.
+- `NewUUIDv7` is deprecated and wraps the standard-library generator. Prefer
+  `uuid.NewV7().String()` directly for UUIDs with cryptographically random bits.
 - `Parse[T]`/`MustParse[T]` call a `Parse(string) error` method; instantiate with a pointer type
   (`Parse[*Port]`).
 
@@ -58,28 +59,28 @@ the full API.
   goroutines start, for your own application prefix.
 - Typed getters: `GetEnvString`, `GetEnvBool`, `GetEnvInt`, `GetEnvDuation` (misspelled),
   `GetEnvCommaSep`, `GetAddrEnv`, and generic `GetEnv[T](key, def, parser)`. An unparsable value
-  panics with a message that names the key but not the value.
-- `env/godoxy` is GoDoxy's registry of server settings (also read by the `server` and
-  `http/websocket` modules). Use it only when integrating with GoDoxy's environment contract.
+  panics with a message containing the key and supplied value. The `server` and
+  `http/websocket` modules parse their boolean flags during package initialization; an invalid
+  `DEBUG` value therefore intentionally panics during import.
 
 ## Small types
 
 - `fs.ListFiles(dir, maxDepth, hideHidden...)`: depth 0 lists only the top level. Results are
-  `dir`-joined paths, and `hideHidden` applies only to the top level.
+  `dir`-joined paths, and `hideHidden` applies recursively.
 - `num.Percentage`: a 1-byte value in [0, 100] with about 0.4 precision. It marshals to a JSON
   number with one decimal.
 - `intern.Make(v)` returns a comparable `Handle[T]` that deduplicates repeated values (hostnames,
   names). The zero handle panics on `Value()`. `intern.MakeValue(v)` returns the interned value.
 - `version.Parse("v1.2.3")`: the format is `v<gen>.<major>.<minor>` with an optional `-suffix`.
   It never errors, and anything else parses to v0.0.0. `version.Get()` reports the build version
-  set with `-ldflags "-X github.com/yusing/goutils/version.version=v1.2.3"`. `IsOlderThan` is
-  `!IsNewerThan`, so it is true for equal versions; compare with `IsEqual` first.
-- `mockable.TimeNow` is a replaceable `time.Now` (used by `NewUUIDv7`). See `testing.md`.
+  set with `-ldflags "-X github.com/yusing/goutils/version.version=v1.2.3"`. Older/newer
+  comparisons are strict; major-only comparisons ignore Minor.
+- `mockable.TimeNow` is a replaceable `time.Now` for code that explicitly reads it. See `testing.md`.
 
 ## apitypes (`github.com/yusing/goutils/apitypes`)
 
 JSON response shapes for gin-style APIs: `apitypes.Error(message, err)` (uses `Plain()` for
-gperr errors; passing a nil error panics, so omit it instead), `apitypes.Success(message,
+gperr errors; nil errors are skipped), `apitypes.Success(message,
 details)`, and `QueryOptions`/`QueryResponse` for paginated lists (`form`/`binding` tags, limit
 1-20). `InternalServerError(err, message)` takes the error first and is meant for `c.Error(...)`
 with middleware that replies with a generic 500.
@@ -102,6 +103,7 @@ u, err := getUser(ctx, "42")
 - Refreshes are single-flight per key, and waiting callers do not observe their own context
   deadline.
 - `WithRetries*(n)` allows up to `n+1` calls; exponential backoff has no overall time limit.
-- Keyed caches grow without bound unless `WithMaxEntries` is set. A process can build at most 32
-  bounded keyed caches; the 33rd `Build()` panics, so never build them per request.
+- Keyed caches grow without bound unless `WithMaxEntries` is set. Janitor registrations have
+  no fixed cap but last for the process lifetime, so reuse bounded caches instead of building
+  them per request.
 - `-tags debug` logs hits and misses, including summarized cached values, through zerolog.

@@ -42,8 +42,8 @@ alone do not need it.
   `true, httputils.NewRequestInterceptedError(resp, data)` and recover `data` with
   `AsRequestInterceptedError`.
 - `GetSharedData(w)` returns a per-request `Cache` of parsed cookies, queries, basic auth, and
-  remote IP when `w` is a `ResponseModifier` (otherwise a fresh one each call). Calling
-  `GetBasicAuth` twice on the same cache can panic when the request has no credentials.
+  remote IP when `w` is a `ResponseModifier` (otherwise a fresh one each call).
+  `GetBasicAuth` returns nil for absent credentials, including cached misses.
 - `LogError`/`LogWarn`/`LogInfo`/`LogDebug(r, msg, fields...)` log through `goutils/logging` with
   `remote`, `host`, and `uri` fields.
 - `IsUnexpectedError(err)` filters out client disconnects and closed streams before you log
@@ -109,17 +109,17 @@ func handle(c *gin.Context) {
   need that loop.
 - Keep draining `ReadCh` (it is never closed; select on `Done()`). A stalled reader also stalls
   ping handling and drops the connection.
-- After a clean close, `ReadJSON`/`ReadBinary` can return a nil error with no data; check
-  `Done()` or `Context().Err()`. Write timeouts surface as a `net.Error` timeout, not
-  `ErrWriteTimeout`.
-- `NewReader()` returns whole messages and needs a read buffer at least as large as a message;
-  prefer `ReadCh`, `ReadJSON`, or `ReadBinary`.
+- Closed reads/writes return their recorded error or `net.ErrClosed` after a clean close.
+  Write timeouts return `ErrWriteTimeout`; `PeriodicWrite` still returns nil after a clean close.
+- `NewReader()` supports small buffers, preserves unread bytes, and returns `io.EOF` on clean close.
 - Use `CopyJSONStream(r)` or `CopyTextLines(r)` to turn a byte stream into one message per JSON
   value or line, `PeriodicWrite(interval, get)` for deduplicated polling updates, and
   `WriteJSON` for single values. JSON uses `encoding/json/v2`.
-- The default origin check accepts no `Origin`, a same-host origin, or any origin when Host is
-  `localhost`/`127.0.0.1`. Supply a stricter gorilla `*websocket.Upgrader` (import gorilla under
-  an alias) via `c.Set("upgrader", u)` before upgrading.
+- The default origin check accepts no `Origin` or a same-host origin, including on loopback
+  hosts (ports/scheme are ignored). Preserve public Host through external proxies, or supply a
+  custom gorilla `*websocket.Upgrader` via `c.Set("upgrader", u)` before upgrading.
+- Gin debug mode intentionally allows `?no-ping=true` to disable the text heartbeat; use release
+  mode in production.
 
 ## server
 
@@ -137,18 +137,17 @@ task.WaitExit(5)
 ```
 
 - Each listener runs only when its address is set (`HTTPAddr`, `HTTPSAddr`). HTTPS also needs
-  `CertProvider`, and `GetCert(nil)` must succeed, otherwise HTTPS is skipped without an error.
+  `CertProvider`, and `GetCert(nil)` must return a certificate, otherwise `Start` fails before
+  opening any listener.
   The plain HTTP listener serves h2c too.
 - `StartServer` returns once listening. Shutdown follows the parent task: listeners close, and
   in-flight requests get 1 s and see their request context canceled.
 - `(*Server).Start(parent, http3Enabled)` enables HTTP/3 on the HTTPS address (with `Alt-Svc`).
-  If HTTPS fails after HTTP started, HTTP keeps serving until the parent is canceled.
+  Startup failures stop and wait for protocols started by the call without canceling the parent.
 - PROXY protocol: build a policy with `server.NewProxyProtocolPolicy(ProxyProtocolConfig{Mode:
   "mixed" or "required", TrustedProxies: [...]})`. Do not use the legacy
-  `SupportProxyProtocol`, which trusts any peer. A PROXY policy combined with HTTPS currently
-  panics at start, so check `server/README.md` before combining them.
+  `SupportProxyProtocol`, which trusts any peer. HTTPS supports these policies; HTTP/3 does not.
 - The generic `server.Start(task, srv, opts...)` serves a single `*http.Server` or HTTP/3 server
   and returns the bound port. On a listen error it does not finish the task, so call
-  `t.Finish(err)` yourself. `WithTCPWrappers` after `WithACL` discards the ACL wrapper; pass the
-  ACL last.
+  `t.Finish(err)` yourself. Wrapper options append in order and preserve ACL enforcement.
 - Logs through zerolog's global logger.

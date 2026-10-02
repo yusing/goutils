@@ -27,8 +27,7 @@ The returned error's `Error()` renders a header and one indented `• ` bullet p
   and it is not safe for concurrent use. Use `gperr.NewGroup(context)` with `Go`/`Add` and
   `Wait()` (which returns `*Builder`) to collect from goroutines; it does not cancel on the first
   error.
-- `New("")`, `Wrap(nil)`, an all-nil `Join`, and an empty builder all return nil. `gperr.Unwrap(nil)`
-  does not: it returns a non-nil `Error` whose `Error()` panics, so guard nil first.
+- `New("")`, `Wrap(nil)`, `Unwrap(nil)`, an all-nil `Join`, and an empty builder all return nil.
 - `err.Subject("a").Subject("b")` renders `b > a: message` (the innermost subject highlighted).
   Subjects starting with `[`, `(`, or `{` attach to the next subject, giving `items[0] > name: …`.
   `gperr.PrependSubject(err, subject)` does the same for any `error`. An empty subject on an error
