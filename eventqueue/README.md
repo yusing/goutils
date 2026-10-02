@@ -1,415 +1,173 @@
 # goutils/eventqueue
 
-A generic, buffered event queue with batch processing and configurable flush intervals.
+Batches events from a channel and hands them to one callback on a timer. Bursts
+become a few calls instead of one call per event, flushes never overlap, and the
+queue lives and dies with a [`task`](../task/README.md).
 
-## Overview
+Typical uses are coalescing file-system or container events before a reload,
+and batching writes to a slow sink. It does not persist, filter, deduplicate, or
+acknowledge events.
 
-The `eventqueue` package provides a generic event queue implementation that buffers events and flushes them in batches at configurable intervals. It is designed for scenarios where event aggregation reduces processing overhead and improves efficiency.
+## Install
 
-### Purpose
-
-- **Event Aggregation**: Buffer multiple events and process them together
-- **Batch Processing**: Flush events at configurable intervals for efficiency
-- **Lifecycle Management**: Integrated with [`task.Task`](https://pkg.go.dev/github.com/yusing/goutils/task) for controlled shutdown
-- **Error Handling**: Panic recovery and error callback propagation
-
-### Primary Consumers
-
-- [`internal/watcher/events`](internal/watcher/events) - Uses this package for Docker and file events
-- Any package requiring buffered event processing with batch flush
-
-### Non-goals
-
-- Does not implement event persistence or storage
-- Does not provide event filtering or transformation
-- Does not handle event acknowledgments
-
-### Stability
-
-Public API is stable. Generic type parameter allows any `Event` type.
-
-## Quick Start
+```sh
+go get github.com/yusing/goutils@v0.8.0
+```
 
 ```go
+import "github.com/yusing/goutils/eventqueue"
+```
+
+The package is in the root module and needs Go 1.27 or later. It depends on
+`task` and `errs` from the same module.
+
+## Quick start
+
+```go
+package main
+
 import (
-    "time"
-    "github.com/yusing/goutils/eventqueue"
-    "github.com/yusing/goutils/task"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/yusing/goutils/eventqueue"
+	"github.com/yusing/goutils/task"
 )
 
-type MyEvent struct {
-    ID   string
-    Type string
-}
+type change struct{ Path string }
 
-queue := eventqueue.New(task.Subtask("my-events"), eventqueue.NewOptions[MyEvent]{
-    FlushInterval: 5 * time.Second,
-    Capacity:      100,
-    OnFlush: func(events []MyEvent) {
-        // Process batch of events
-    },
-    OnError: func(err error) {
-        // Handle errors
-    },
-})
+func main() {
+	eventCh := make(chan change)
+	errCh := make(chan error)
 
-queue.Start(eventCh, errCh)
-```
+	queueTask := task.RootTask("change-queue", true)
+	queue := eventqueue.New(queueTask, eventqueue.Options[change]{
+		FlushInterval: 200 * time.Millisecond,
+		OnFlush: func(batch []change) {
+			fmt.Println("flush:", batch)
+		},
+		OnError: func(err error) {
+			fmt.Println("error:", err)
+		},
+	})
+	queue.Start(eventCh, errCh)
 
-## Public API
+	eventCh <- change{"a.txt"}
+	eventCh <- change{"b.txt"}
+	errCh <- errors.New("watcher hiccup")
+	time.Sleep(500 * time.Millisecond)
 
-### Exported Types
-
-#### EventQueue
-
-```go
-type EventQueue[Event any] struct {
-    task    *task.Task
-    queue   []Event
-    ticker  *time.Ticker
-    onFlush OnFlushFunc[Event]
-    onError OnErrorFunc
-    debug   bool
+	// Stop the queue and wait for any flush that is still running.
+	queueTask.FinishAndWait(nil)
 }
 ```
 
-A generic event queue that buffers events and flushes them in batches.
+Expected output, with the two events normally in one batch:
 
-**Fields:**
-
-| Field           | Type                 | Description                           |
-| --------------- | -------------------- | ------------------------------------- |
-| `task`          | `*task.Task`         | Lifetime management for the queue     |
-| `queue`         | `[]Event`            | Internal buffer for pending events    |
-| `ticker`        | `*time.Ticker`       | Timer for flush intervals             |
-| `onFlush`       | `OnFlushFunc[Event]` | Callback invoked with batch of events |
-| `onError`       | `OnErrorFunc`        | Callback invoked on errors or panics  |
-| `debug`         | `bool`               | Enable debug mode for stack traces    |
-
-#### OnFlushFunc
-
-```go
-type OnFlushFunc[Event any] = func(events []Event)
+```text
+error: watcher hiccup
+flush: [{a.txt} {b.txt}]
 ```
 
-Callback invoked when the flush interval is reached and the queue contains events.
+## How it behaves
 
-#### OnErrorFunc
+`New(queueTask, Options)` allocates the queue and a ticker. `Start(eventCh, errCh)`
+launches the one goroutine that does the work. Call `Start` once.
 
-```go
-type OnErrorFunc = func(err error)
-```
-
-Callback invoked when:
-
-- An error is received from the error channel
-- A panic occurs in `OnFlushFunc`
-
-#### NewOptions
-
-```go
-type NewOptions[Event any] struct {
-    Capacity      int
-    FlushInterval time.Duration
-    OnFlush       OnFlushFunc[Event]
-    OnError       OnErrorFunc
-    Debug         bool
-}
-```
-
-Configuration options for constructing a new `EventQueue`.
-
-| Field           | Type                 | Default | Description                              |
-| --------------- | -------------------- | ------- | ---------------------------------------- |
-| `Capacity`      | `int`                | 10      | Maximum number of events to buffer       |
-| `FlushInterval` | `time.Duration`      | -       | How often to flush events (required)     |
-| `OnFlush`       | `OnFlushFunc[Event]` | -       | Callback for batch processing (required) |
-| `OnError`       | `OnErrorFunc`        | -       | Callback for error handling (optional)   |
-| `Debug`         | `bool`               | `false` | Include stack traces on panic            |
-
-### Exported Functions
-
-#### New
-
-```go
-func New[Event any](queueTask *task.Task, opt NewOptions[Event]) *EventQueue[Event]
-```
-
-Creates a new `EventQueue` with the provided configuration.
-
-**Parameters:**
-
-- `queueTask` - Task for lifetime management. Must not be nil.
-- `opt` - Configuration options including callbacks and flush interval
-
-**Behavior:**
-
-- Starts a goroutine for event processing
-- Events are buffered until flush interval is reached
-- Panics in `OnFlush` are recovered and sent to `OnError`
-- If `queueTask` is cancelled before flush, events are discarded
-
-#### Start
-
-```go
-func (e *EventQueue[Event]) Start(eventCh <-chan Event, errCh <-chan error)
-```
-
-Begins processing events from the provided channels.
-
-**Parameters:**
-
-- `eventCh` - Channel receiving events to buffer
-- `errCh` - Channel receiving errors to handle
-
-**Lifecycle:**
-
-1. Starts a goroutine that selects on:
-   - Task cancellation (`<-task.Context().Done()`)
-   - Flush ticker (`<-e.ticker.C`)
-   - Event channel (`event, ok := <-eventCh`)
-   - Error channel (`err, ok := <-errCh`)
-
-2. On flush: clones queue, clears it, invokes `onFlush` in a single in-flight flush goroutine
-
-3. While `onFlush` runs, continues buffering new events and flushes them after the active flush finishes
-
-4. On panic: recovers, sends error to `onError`, continues
-
-5. On task done: waits for the active flush, stops ticker, calls `task.Finish(nil)`
-
-## Architecture
-
-### Event Flow
-
-```mermaid
-sequenceDiagram
-    participant Source as Event Source
-    participant EventQueue as Event Queue
-    participant Processor as Flush Callback
-
-    Source->>EventQueue: eventCh <- Event
-    EventQueue->>EventQueue: Buffer event
-    loop Flush Interval
-        EventQueue->>EventQueue: Check ticker
-        alt Queue has events
-            EventQueue->>EventQueue: Clone queue
-            EventQueue->>EventQueue: Clear buffer
-            EventQueue->>Processor: onFlush(events)
-            Note over EventQueue: Continue buffering new events while flush runs
-        end
-    end
-
-    alt Error
-        Source->>EventQueue: errCh <- Error
-        EventQueue->>Processor: onError(err)
-    end
-```
-
-### Queue States
-
-```mermaid
-stateDiagram-v2
-    [*] --> Empty: Start()
-    Empty --> Buffering: Event received
-    Buffering --> Flushing: Flush interval reached
-    Flushing --> Buffering: Event received during active flush
-    Flushing --> Flushing: Pending events flush after active flush
-    Buffering --> Empty: Task cancelled
-    Flushing --> Empty: Task cancelled
-    Flushing --> [*]: Finish()
-```
-
-### Core Components
-
-| Component           | Responsibility                               |
-| ------------------- | -------------------------------------------- |
-| `EventQueue[Event]` | Generic queue with buffering and batch flush |
-| `task.Task`         | Lifetime management and cancellation         |
-| `time.Ticker`       | Periodic flush triggering                    |
-| `OnFlushFunc`       | Batch event processor                        |
-| `OnErrorFunc`       | Error and panic handler                      |
-
-## Configuration Surface
+| Aspect | Behavior |
+| --- | --- |
+| Buffering | Every value received from `eventCh` is appended to an in-memory buffer. |
+| Flush trigger | Every `FlushInterval` tick, if the buffer is not empty and no flush is running. |
+| Flush call | The buffer is copied and `OnFlush(batch)` runs on its own goroutine. The slice belongs to the callback. Order is preserved within and across batches. |
+| One at a time | Never two `OnFlush` calls at once. While one runs, new events keep being buffered, and they are flushed right after it returns, without waiting for the next tick. |
+| Errors | A non-nil value received from `errCh` goes to `OnError`. Nil values are ignored. |
+| Panics | A panic in `OnFlush` is recovered, converted to an error that names the task, and passed to `OnError`. The queue keeps running. |
+| Stop | See below. |
 
 ### Options
 
-| Parameter       | Type            | Default | Description                                |
-| --------------- | --------------- | ------- | ------------------------------------------ |
-| `Capacity`      | `int`           | 10      | Maximum buffer size; blocks sender if full |
-| `FlushInterval` | `time.Duration` | -       | Required; interval between flushes         |
-| `OnFlush`       | `func([]Event)` | -       | Required; called with batch                |
-| `OnError`       | `func(error)`   | nil     | Optional; error handler                    |
-| `Debug`         | `bool`          | false   | Include stack traces on panic              |
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `FlushInterval` | 1 s when zero or negative | Tick period. |
+| `OnFlush` | none | Required. A nil `OnFlush` makes every flush report a nil-dereference error to `OnError`. |
+| `OnError` | none | Optional. Called on the queue goroutine, so a slow handler delays event intake. |
+| `Capacity` | 10 when zero or negative | Initial capacity of the buffer only. It is not a limit: the buffer grows, nothing is dropped, and senders are not blocked by it. |
+| `Debug` | `false` | Appends a stack trace to the error produced from a recovered `OnFlush` panic. |
 
-### Capacity Behavior
+There is no backpressure. If `OnFlush` is slower than the event rate, the buffer
+grows without bound.
 
-```go
-const defaultEventQueueCapacity = 10
-```
+### Stopping and ownership
 
-- Queue has fixed capacity; `append` blocks if full
-- Excess events may block the sender until space is available
-- Use larger capacity for high-throughput scenarios
+The queue goroutine stops when any of these happens:
 
-## Dependency and Integration Map
+- the queue's task is canceled (call `Finish` on it, or cancel a parent task);
+- `eventCh` is closed;
+- `errCh` is closed.
 
-### Internal Dependencies
+On stop it waits for a flush in progress and passes that flush's error to
+`OnError`, then calls `queueTask.Finish(nil)` and stops the ticker. Events that
+are still buffered and were never handed to `OnFlush` are discarded.
 
-| Package                                                                               | Purpose                              |
-| ------------------------------------------------------------------------------------- | ------------------------------------ |
-| [`github.com/yusing/goutils/task`](https://pkg.go.dev/github.com/yusing/goutils/task) | Lifetime management and cancellation |
-| [`github.com/yusing/goutils/errs`](https://pkg.go.dev/github.com/yusing/goutils/errs) | Error handling with subjects         |
+Pass a subtask dedicated to this queue, created with `needFinish=true`, such as
+`componentTask.Subtask("change-queue", true)`, so a parent's `FinishAndWait` or
+`task.WaitExit` waits for the last flush. The queue finishes that task itself.
+The quick start uses `RootTask` only to stay self-contained.
 
-### Integration Points
+Two practical consequences:
 
-- **Event Sources**: Emit events via `eventCh` channel
-- **Error Sources**: Emit errors via `errCh` channel
-- **Processors**: Implement `OnFlushFunc` and `OnErrorFunc` callbacks
-
-## Observability
-
-### Logs
-
-No direct logging. Errors propagated via `OnError` callback.
-
-### Metrics
-
-None exposed.
-
-## Failure Modes and Recovery
-
-| Failure          | Detection                 | Recovery                           |
-| ---------------- | ------------------------- | ---------------------------------- |
-| Channel closed   | `!ok` on receive          | Queue stops                        |
-| Panic in onFlush | `recover()`               | Error sent to `onError`, continues |
-| Task cancelled   | `<-task.Context().Done()` | Queue stops, events discarded      |
-| Flush blocked    | Active `onFlush` running  | Events keep buffering in memory    |
-
-### Panic Recovery
+- Closing either channel stops the queue, even if the other channel is still in
+  use. Do not close `errCh` as a way to say "no more errors". Pass `nil` for a
+  channel you never use. A nil channel is simply never selected.
+- After the queue stops, nobody reads `eventCh`. A producer that sends on an
+  unbuffered channel would block forever, so select on the queue's context:
 
 ```go
-flush := func(events []Event) (err error) {
-    defer func() {
-        if errV := recover(); errV != nil {
-            var recovered gperr.Error
-            switch errV := errV.(type) {
-            case error:
-                recovered = gperr.PrependSubject(errV, e.task.Name())
-            default:
-                recovered = gperr.New("recovered panic in onFlush").Withf("%v", errV).Subject(e.task.Name())
-            }
-            if e.debug {
-                recovered = recovered.Withf("%s", debug.Stack())
-            }
-            err = recovered
-        }
-    }()
-    onFlush(events)
-    return nil
+select {
+case eventCh <- ev:
+case <-queueTask.Context().Done():
 }
 ```
 
-- Panics in `onFlush` are recovered and converted to errors
-- Stack traces included if `Debug: true`
+## Errors
 
-## Usage Examples
+`OnError` receives:
 
-### Basic Setup
+- every non-nil error sent on `errCh`, unchanged;
+- one error per `OnFlush` panic. It is a goutils [`errs`](../errs) error whose
+  subject is the queue task's name, prefixed to the original error when the panic
+  value was an error. Its `Error()` text contains ANSI styling, so do not compare
+  it as a plain string.
 
-```go
-import (
-    "time"
-    "github.com/yusing/goutils/eventqueue"
-    "github.com/yusing/goutils/task"
-)
+The package writes no logs. Where the errors go is up to `OnError`.
 
-type AppEvent struct {
-    ID   string
-    Data string
-}
+## Concurrency
 
-queue := eventqueue.New(
-    task.Subtask("app-events"),
-    eventqueue.NewOptions[AppEvent]{
-        FlushInterval: 5 * time.Second,
-        Capacity:      50,
-        OnFlush: func(events []AppEvent) {
-            for _, e := range events {
-                process(e)
-            }
-        },
-        OnError: func(err error) {
-            log.Error().Err(err).Msg("event queue error")
-        },
-    },
-)
-```
+Channels are the only way to feed the queue. Call `Start` once. `OnFlush` runs on
+a goroutine of its own, one call at a time. `OnError` runs on the queue goroutine.
+They can overlap, because an error arriving on `errCh` is handled while a flush is
+running, so guard state they share.
 
-### Integration with Event Sources
+## Reference
 
 ```go
-func watchEvents(ctx context.Context) error {
-    eventCh := make(chan AppEvent, 100)
-    errCh := make(chan error, 10)
+func New[Event any](queueTask *task.Task, opt Options[Event]) *EventQueue[Event]
+func (e *EventQueue[Event]) Start(eventCh <-chan Event, errCh <-chan error)
 
-    go produceEvents(ctx, eventCh, errCh)
-
-    queue := eventqueue.New(
-        task.Subtask("event-processor"),
-        eventqueue.NewOptions[AppEvent]{
-            FlushInterval: 10 * time.Second,
-            OnFlush: handleBatch,
-            OnError: logError,
-        },
-    )
-
-    queue.Start(eventCh, errCh)
-    return nil
-}
-
-func handleBatch(events []AppEvent) {
-    // Process all events in batch
-    for _, e := range events {
-        // Process each event
-    }
-}
-
-func logError(err error) {
-    // Handle or log error
+type Options[Event any] struct {
+	Capacity      int
+	FlushInterval time.Duration
+	OnFlush       OnFlushFunc[Event] // func(events []Event)
+	OnError       OnErrorFunc        // func(err error)
+	Debug         bool
 }
 ```
 
-### Custom Event Types
+`go doc -all github.com/yusing/goutils/eventqueue` lists the exported API.
 
-```go
-type DockerEvent struct {
-    ContainerID string
-    Action      string
-    Timestamp   time.Time
-}
+## Testing
 
-type FileEvent struct {
-    Path    string
-    Op      string
-    Content []byte
-}
-
-// Use generic queue with different event types
-dockerQueue := eventqueue.New(...)
-fileQueue := eventqueue.New(...)
-```
-
-## Testing Notes
-
-- Test with synthetic events via channel
-- Verify batch ordering is preserved
-- Test panic recovery by injecting panics in callback
-- Verify task cancellation discards events correctly
-- Test capacity limits by flooding the event channel
-
-## Related Packages
-
-- [`internal/watcher/events`](internal/watcher/events) - Docker/file events using this package
-- [`github.com/yusing/goutils/task`](https://pkg.go.dev/github.com/yusing/goutils/task) - Task management
-- [`github.com/yusing/goutils/errs`](https://pkg.go.dev/github.com/yusing/goutils/errs) - Error handling
+Use a subtask of `task.GetTestTask(t)` as `queueTask`, a short `FlushInterval`,
+and channels you control. In your cleanup, call `FinishAndWait` on that subtask
+so `OnFlush` has returned before the test ends.

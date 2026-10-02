@@ -1,635 +1,361 @@
 # goutils/task
 
-Task utility package for managing object lifetimes with hierarchical subtasks, callbacks, and graceful shutdown.
+Hierarchical lifetimes for the goroutines and resources of a Go program. A task
+is a node in a tree that owns a cancellable context, cleanup callbacks, and
+context values. Finishing a task cancels everything below it, and
+`task.WaitExit` turns SIGINT, SIGTERM, or SIGHUP into one bounded, reported
+graceful shutdown.
 
-## Overview
+Use it when many components start and stop together and you want one shutdown
+path that waits for them and tells you which one is stuck. It does not schedule
+work, pool goroutines, or retry anything.
 
-The `task` package provides a structured lifetime management system for Go applications. It implements a hierarchical task tree where parent tasks control the lifecycle of child tasks, enabling coordinated shutdown, context propagation, and cleanup callbacks.
+## Install
 
-### Purpose
-
-- Manage hierarchical object lifetimes in long-running applications
-- Coordinate graceful shutdown across multiple subsystems
-- Propagate context and values from root to all subtasks
-- Ensure cleanup callbacks execute in the correct order (cancel before finish)
-
-### Primary Consumers
-
-- Core application components (`internal/` packages)
-- Docker container watchers and controllers
-- API servers and background workers
-- Any package requiring coordinated lifecycle management
-
-### Non-goals
-
-- Does not provide thread pooling or work scheduling
-- Does not handle retry logic or backoff strategies
-
-### Stability
-
-- Exported types and functions are stable
-- Internal implementation may evolve, preserving public contracts
-- `debug` build tag enables additional logging for development
-
-Shutdown warnings, callback panic diagnostics, and debug lifecycle messages use
-[`goutils/logging`](../logging/README.md). Install an application logger to receive
-them; the default is silent. Task cleanup and panic behavior do not depend on
-whether a logger is installed.
-
-## Concepts and Terminology
-
-| Term                    | Definition                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------ |
-| **Task**                | A node in the hierarchical lifetime tree controlling object lifecycle          |
-| **Root Task**           | The top-level task, parent of all other tasks, derived from background context |
-| **Subtask**             | A child task whose context is derived from its parent                          |
-| **Finish**              | The act of signaling a task to stop; triggers context cancellation             |
-| **OnCancel Callback**   | Callback that runs immediately when task context is done                       |
-| **OnFinished Callback** | Callback that runs after all subtasks have finished                            |
-| **needFinish**          | Boolean flag indicating whether task requires explicit finish tracking         |
-| **Dependencies**        | Generic container tracking child tasks or callbacks                            |
-
-## Public API
-
-### Exported Types
-
-#### Task struct
-
-The core type managing object lifetime. Objects using Task should implement `TaskStarter` and `TaskFinisher` interfaces.
+```sh
+go get github.com/yusing/goutils@v0.8.0
+```
 
 ```go
-type Task struct {
-    // parent is the parent task in the hierarchy
-    parent *Task
-
-    // name is the interned task name for memory efficiency
-    name intern.Handle[string]
-
-    // ctx is the derived context for this task
-    ctx context.Context
-
-    // cancel is the cancel function for the context
-    cancel context.CancelCauseFunc
-
-    // done is closed when task is finished (nil or closedCh if needFinish is false)
-    done chan struct{}
-
-    // finishCalled tracks if Finish has been called (idempotent)
-    finishCalled bool
-
-    // callbacks stores registered callbacks
-    callbacks *Dependencies[*Callback]
-
-    // children stores subtasks
-    children *Dependencies[*Task]
-
-    // values stores context values (atomic pointer to xsync.Map)
-    values atomic.Pointer[xsync.Map[any, any]]
-
-    // mu protects finishCalled and lazy-initialized fields
-    mu sync.Mutex
-}
+import "github.com/yusing/goutils/task"
 ```
 
-**Invariants:**
+`task` is in the root module and needs Go 1.27 or later.
 
-- A task can only be finished once (idempotent Finish calls)
-- All subtasks finish before parent OnFinished callbacks execute
-- OnCancel callbacks execute immediately when context is done
-- The task tree forms a directed acyclic graph rooted at the root task
-
-#### Parent interface
-
-Interface that Task implements for creating and managing subtasks.
+## Quick start
 
 ```go
-type Parent interface {
-    // Context returns the task's context for deriving child contexts
-    Context() context.Context
+package main
 
-    // Subtask creates a new child task with the given name
-    Subtask(name string, needFinish bool) *Task
+import (
+	"context"
+	"net/http"
+	"time"
 
-    // Name returns the task's name
-    Name() string
+	"github.com/yusing/goutils/task"
+)
 
-    // Finish signals the task to stop with the given reason
-    Finish(reason any)
-
-    // OnCancel registers a callback for when context is done
-    OnCancel(name string, f func())
-
-    // SetValue stores a value in the task's context
-    SetValue(key any, value any)
-
-    // GetValue retrieves a value from the task's context
-    GetValue(key any) any
-}
-```
-
-#### TaskStarter interface
-
-Interface for objects that need to be started with a parent task.
-
-```go
-type TaskStarter interface {
-    // Start initializes the object and returns an error if it fails
-    Start(parent Parent) error
-
-    // Task returns the task associated with this object
-    Task() *Task
-}
-```
-
-**Contract:** Caller must invoke `subtask.Finish()` when start fails or the object finishes.
-
-#### TaskFinisher interface
-
-Interface for objects that need cleanup when finished.
-
-```go
-type TaskFinisher interface {
-    Finish(reason any)
-}
-```
-
-#### Dependencies[T] struct
-
-Generic container for tracking dependencies with concurrent-safe operations.
-
-```go
-type Dependencies[T comparable] struct {
-    m     *xsync.Map[T, struct{}]  // concurrent-safe map
-    count atomic.Int64              // number of elements
-    done  atomic.Pointer[chan struct{}]  // channel closed when count reaches 0
-}
-```
-
-### Exported Functions and Methods
-
-#### Root-level Functions
-
-```go
-// RootTask creates a new task derived from the root task context
-func RootTask(name string, needFinish bool) *Task
-
-// RootContext returns the root task's context
-func RootContext() context.Context
-
-// RootContextCanceled returns a channel closed when root context is done
-func RootContextCanceled() <-chan struct{}
-
-// OnProgramExit registers a callback to run on program shutdown
-func OnProgramExit(about string, fn func())
-
-// WaitExit waits for shutdown signal, then gracefully shuts down
-func WaitExit(shutdownTimeout int)
-```
-
-#### Task Methods
-
-```go
-// Context returns a context.Context that also returns task values via Value()
-func (t *Task) Context() context.Context
-
-// Name returns the task's name (not including parent names)
-func (t *Task) Name() string
-
-// String returns the full hierarchical name (e.g., "root.child.grandchild")
-func (t *Task) String() string
-
-// Finish signals the task to stop (asynchronous, returns immediately)
-func (t *Task) Finish(reason any)
-
-// FinishCause returns the error that caused the task to finish
-func (t *Task) FinishCause() error
-
-// FinishAndWait signals stop and waits for all subtasks to finish
-func (t *Task) FinishAndWait(reason any)
-
-// OnFinished registers a callback after all subtasks complete
-// Should not be called after Finish
-func (t *Task) OnFinished(about string, fn func())
-
-// OnCancel registers a callback when context is done
-// Should not be called after Finish
-func (t *Task) OnCancel(about string, fn func())
-
-// Subtask creates a child task
-// Should not be called after Finish on this task or its parent
-func (t *Task) Subtask(name string, needFinish bool) *Task
-
-// SetValue stores a value in this task's context (thread-safe)
-func (t *Task) SetValue(key any, value any)
-
-// GetValue retrieves a value, searching this task and parents (thread-safe)
-func (t *Task) GetValue(key any) any
-```
-
-#### Concurrency Guarantees
-
-- All exported methods are safe for concurrent use
-- Finish is idempotent (multiple calls wait but only report stuck once)
-- SetValue/GetValue use atomic operations for lock-free reads
-- Dependencies use xsync.Map for concurrent-safe add/delete/range
-
-#### Lifecycle Rules
-
-1. Subtasks must be created before Finish is called on parent
-2. Callbacks (OnCancel/OnFinished) must be registered before Finish
-3. When a parent finishes, all children contexts are canceled
-4. OnFinished callbacks execute only after all children have finished
-5. Task tree forms a hierarchy; root task cannot be finished
-
-## Architecture
-
-### Core Components
-
-```mermaid
-graph TD
-    subgraph Task Core
-        T[Task struct] --> |contains| ParentI[Parent interface]
-        T --> |contains| Deps[Dependencies#123;T#125;]
-        T --> |uses| Values[xsync.Map for values]
-    end
-
-    subgraph Interfaces
-        TSI[TaskStarter interface]
-        TFI[TaskFinisher interface]
-        PI[Parent interface]
-    end
-
-    subgraph Root Functions
-        RT[RootTask]
-        RC[RootContext]
-        WE[WaitExit]
-    end
-
-    subgraph Context
-        CWV[ctxWithValues]
-    end
-```
-
-### Component Responsibilities
-
-| Component         | Responsibility                                                 |
-| ----------------- | -------------------------------------------------------------- |
-| `Task`            | Lifetime management, context derivation, callback registration |
-| `Dependencies[T]` | Track child tasks or callbacks with Wait semantics             |
-| `ctxWithValues`   | Wrap context.Context to include task values                    |
-| `RootTask`        | Initialize root task on package init                           |
-| `WaitExit`        | Signal handling and graceful shutdown coordination             |
-
-### Task Tree Structure
-
-```mermaid
-graph TB
-    subgraph Root Task
-        R[root]
-    end
-
-    subgraph Subtrees
-        S1[Subtask A] --> S11[Subtask A.1]
-        S1 --> S12[Subtask A.2]
-        S2[Subtask B] --> S21[Subtask B.1]
-    end
-
-    R --> S1
-    R --> S2
-
-    style R fill:#22553F,color:#fff
-    style S1 fill:#3D8B5F,color:#fff
-    style S2 fill:#3D8B5F,color:#fff
-    style S11 fill:#5BA87A,color:#fff
-    style S12 fill:#5BA87A,color:#fff
-    style S21 fill:#5BA87A,color:#fff
-```
-
-### Lifecycle State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> Running: Subtask created
-
-    Running --> Canceling: Finish called
-    Canceling --> WaitingChildren: Children still running
-
-    WaitingChildren --> Finishing: All children done
-    WaitingChildren --> Canceling: Timeout reached
-
-    Finishing --> [*]: All callbacks executed
-
-    note right of Canceling
-        OnCancel callbacks execute immediately
-        Context is canceled
-    end note
-
-    note right of Finishing
-        OnFinished callbacks execute
-    end note
-```
-
-## Pipeline / Data Flow
-
-### Value Propagation Flow
-
-```mermaid
-sequenceDiagram
-    participant Root
-    participant Parent
-    participant Child
-    participant Context
-
-    Root->>Root: SetValue("key", "value")
-    Parent->>Parent: GetValue("key")
-    Parent->>Root: Not found locally, checks parent
-    Root-->>Parent: Returns "value"
-
-    Parent->>Parent: SetValue("key2", "value2")
-    Child->>Child: GetValue("key2")
-    Child->>Parent: Not found locally, checks parent
-    Parent-->>Child: Returns "value2"
-
-    Child->>Context: Context().Value("key")
-    Context->>Child: GetValue("key")
-    Child->>Parent: Checks parent
-    Parent-->>Child: Returns "value"
-```
-
-### Finish Propagation Flow
-
-```mermaid
-sequenceDiagram
-    participant Parent
-    participant Child1
-    participant Child2
-    participant OnCancel
-    participant OnFinished
-
-    Parent->>Parent: Finish(reason)
-    Parent->>Parent: cancel(reason)
-    Parent->>Child1: Context canceled
-    Parent->>Child2: Context canceled
-
-    Note over Child1,Child2: Children contexts done
-
-    par Execute OnCancel callbacks
-        Child1->>OnCancel: onCancel callback 1
-        Child2->>OnCancel: onCancel callback 2
-    and Wait for children to finish
-        Child1->>Parent: Finish called
-        Child2->>Parent: Finish called
-    end
-
-    Note over Parent: All children finished
-    Parent->>OnFinished: onFinished callbacks
-```
-
-## Configuration Surface
-
-This package does not accept external configuration. All behavior is controlled programmatically via function parameters.
-
-### Key Parameters
-
-| Parameter         | Type     | Default    | Description                                |
-| ----------------- | -------- | ---------- | ------------------------------------------ |
-| `name`            | `string` | (required) | Task name for identification and debugging |
-| `needFinish`      | `bool`   | (required) | Whether to track finish completion         |
-| `shutdownTimeout` | `int`    | (required) | Seconds to wait in `WaitExit`              |
-| `taskTimeout`     | `const`  | 3s         | Internal timeout for stuck detection       |
-
-## Dependency and Integration Map
-
-### Internal Dependencies
-
-| Package                            | Purpose                              |
-| ---------------------------------- | ------------------------------------ |
-| `github.com/puzpuzpuz/xsync/v4`    | Concurrent-safe map for dependencies |
-| `github.com/yusing/goutils/intern` | String interning for task names      |
-
-## Observability
-
-### Logs
-
-| Level  | Build Flag | Message                                            | Condition                                 |
-| ------ | ---------- | -------------------------------------------------- | ----------------------------------------- |
-| `Info` | `debug`    | `task <name> started`                              | Debug build only, when subtask created    |
-| `Info` | `debug`    | `task <name> finished`                             | Debug build only, when task finished      |
-| `Warn` | all        | `<task> stucked callbacks: N, stucked children: M` | Timeout exceeded during graceful shutdown |
-
-**Logged identifiers:** Task full name (hierarchy), callback names
-
-### Metrics
-
-No metrics are currently exported.
-
-### Tracing
-
-- Context propagation follows standard `context.Context` patterns
-- Task context can be used with OpenTelemetry or similar tracers
-- `Context().Value()` does not interfere with tracing keys
-
-## Security Considerations
-
-- Task names are interned but should not contain sensitive data
-- Callbacks run with recover() to prevent panics from crashing the application
-- In debug builds, panic stack traces may expose internal structure
-- No network access or file I/O in core package
-
-## Performance Characteristics
-
-### Big-O Analysis
-
-| Operation           | Complexity               |
-| ------------------- | ------------------------ |
-| `Subtask`           | O(1) amortized           |
-| `Finish`            | O(1)                     |
-| `FinishAndWait`     | O(children + callbacks)  |
-| `SetValue`          | O(1) atomic              |
-| `GetValue`          | O(tree depth) worst case |
-| `Dependencies.Wait` | O(1) channel wait        |
-
-### Backpressure
-
-- `FinishAndWait` blocks until all children finish or timeout
-- `WaitExit` respects the configured shutdown timeout
-- Stuck tasks are reported but do not block indefinitely
-
-## Failure Modes and Recovery
-
-| Failure Mode              | Symptom                                   | Recovery                             |
-| ------------------------- | ----------------------------------------- | ------------------------------------ |
-| Child task stuck          | `FinishAndWait` timeout, warning log      | Manual restart; investigate callback |
-| Multiple `Finish` calls   | Only first reports stuck, subsequent wait | Idempotent by design                 |
-| Callback panic            | Logged with callback name, debug stack    | Recovered, application continues     |
-| Context cancellation leak | Resources not released                    | Ensure `Finish` is called on parent  |
-
-### Stuck Task Detection
-
-When `FinishAndWait` or `WaitExit` exceeds the 3-second timeout, the package logs a warning containing:
-
-- Task name and hierarchy
-- Names of all stuck callbacks
-- Names of all stuck child tasks
-
-Example log output:
-
-```
-WARN | my-app stucked callbacks: 2, stucked children: 1
-```
-
-### Retry Guidance
-
-- Task finish is not automatically retried
-- Callbacks should be idempotent where possible
-- For transient failures, implement retry logic in the callback itself
-
-## Usage Examples
-
-### Basic: Simple Task Hierarchy
-
-```go
 func main() {
-    root := task.RootTask("app", true)
+	srv := &http.Server{Addr: ":8080"}
 
-    // Create subtasks
-    db := root.Subtask("database", true)
-    api := root.Subtask("api", true)
+	// A task that only carries cleanup (needFinish=false) finishes by itself
+	// when it is canceled.
+	api := task.RootTask("api", false)
+	api.OnCancel("shutdown http server", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
+	go func() { _ = srv.ListenAndServe() }()
 
-    // Register cleanup
-    db.OnCancel("close-connections", func() {
-        dbPool.Close()
-    })
-
-    api.OnCancel("shutdown-server", func() {
-        apiServer.Shutdown()
-    })
-
-    sigCh := make(chan os.Signal, 1)
-    signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-    <-sigCh
-
-    root.Finish(nil)
-    task.WaitExit(30)
+	// Blocks until SIGINT, SIGTERM, or SIGHUP. Then it cancels every task and
+	// waits up to 10 seconds for callbacks and children to finish.
+	task.WaitExit(10)
 }
 ```
 
-### Advanced: TaskStarter/TaskFinisher Pattern
+`WaitExit` is the last call in `main`. It returns once shutdown has completed or
+the timeout expired; it does not call `os.Exit`.
+
+## Core ideas
+
+| Idea | Meaning |
+| --- | --- |
+| Process-wide root | One hidden root task exists per process. You never hold it. `RootTask(name, needFinish)` returns a child of it, and only `WaitExit` finishes it. |
+| Subtask | `parent.Subtask(name, needFinish)` creates a child whose context is derived from the parent's. Cancelling the parent cancels the child. |
+| `needFinish` | `true`: the task is outstanding work. Its owner must call `Finish` when done, and shutdown waits for that call. `false`: the task finishes automatically when its context is canceled. |
+| `OnCancel` | A callback that starts as soon as the task's context is done. |
+| `OnFinished` | A callback that starts once the task itself is finished (`needFinish=true`). On a `needFinish=false` task it is the same as `OnCancel`. |
+| Values | `SetValue`/`GetValue` attach data that the task and its descendants see, also through `Context().Value`. |
+
+Names are interned strings. `Name()` is the task's own name, and `String()` is
+the dotted path from the first task below the root, for example `api.worker`.
+Stuck-task reports use the dotted path.
+
+### Choosing `needFinish`
+
+- Use `false` for tasks that only supply a context and `OnCancel` hooks, such as
+  per-request or per-connection scopes. They need no explicit `Finish` to be
+  cleaned up on shutdown. Scopes created repeatedly under a long-lived parent
+  should still be finished when they end (see rule 5 below).
+- Use `true` for a goroutine or component that must complete work before the
+  program may exit. Call `Finish` when that work ends, typically with `defer`.
+  If you forget, shutdown waits for the whole timeout and reports the task as
+  stuck.
+
+## Running a component
+
+The `TaskStarter` and `TaskFinisher` interfaces describe objects whose lifetime
+is a task. A `*Task` satisfies `Parent`, so components accept either a task or
+anything else that can hand out subtasks.
 
 ```go
-type Database struct {
-    task *task.Task
-    conn *sql.DB
+package main
+
+import (
+	"time"
+
+	"github.com/yusing/goutils/task"
+)
+
+type Poller struct {
+	task *task.Task
 }
 
-func (d *Database) Start(parent task.Parent) error {
-    d.task = parent.Subtask("database", true)
+var (
+	_ task.TaskStarter  = (*Poller)(nil)
+	_ task.TaskFinisher = (*Poller)(nil)
+)
 
-    var err error
-    d.conn, err = sql.Open("postgres", dsn)
-    if err != nil {
-        d.task.Finish(err)
-        return err
-    }
+func (p *Poller) Start(parent task.Parent) error {
+	t := parent.Subtask("poller", true)
+	if err := p.connect(); err != nil {
+		t.Finish(err) // the Start contract: finish the subtask when Start fails
+		return err
+	}
+	p.task = t
 
-    go d.backgroundSync()
-    return nil
+	go func() {
+		defer t.Finish(nil) // tells the parent's shutdown wait that we are done
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-t.Context().Done():
+				return
+			case <-ticker.C:
+				p.poll()
+			}
+		}
+	}()
+	return nil
 }
 
-func (d *Database) Task() *task.Task {
-    return d.task
-}
+func (p *Poller) Task() *task.Task  { return p.task }
+func (p *Poller) Finish(reason any) { p.task.Finish(reason) }
+func (p *Poller) connect() error    { return nil }
+func (p *Poller) poll()             {}
 
-func (d *Database) Finish(reason any) {
-    d.task.Finish(reason)
-}
-
-func (d *Database) backgroundSync() {
-    for {
-        select {
-        case <-d.task.Context().Done():
-            d.conn.Close()
-            return
-        case <-time.After(time.Minute):
-            d.sync()
-        }
-    }
+func main() {
+	app := task.RootTask("app", false)
+	if err := (&Poller{}).Start(app); err != nil {
+		panic(err)
+	}
+	task.WaitExit(10)
 }
 ```
 
-### Integration: Full Application Setup
+Because `Poller.Start` takes a `task.Parent`, tests can pass `task.GetTestTask(t)`
+and an application can pass `task.RootTask(...)` or another component's subtask.
+
+### Ordered cleanup
+
+Every `OnCancel` callback and every context in the tree reacts to cancellation at
+the same time, in no guaranteed order. To run code after the subtasks of a task
+have finished, wait for them explicitly:
 
 ```go
-type App struct {
-    db    *Database
-    api   *HTTPServer
-    cache *Cache
-}
-
-func (a *App) Run() error {
-    root := task.RootTask("myapp", true)
-
-    // Start all components
-    if err := a.db.Start(root); err != nil {
-        return err
-    }
-    if err := a.api.Start(root); err != nil {
-        a.db.Finish(err)
-        return err
-    }
-    if err := a.cache.Start(root); err != nil {
-        a.api.Finish(err)
-        a.db.Finish(err)
-        return err
-    }
-
-    // Wait for shutdown signal
-    task.WaitExit(30)
-
-    // Components already finished via root cancellation
-    return nil
-}
+go func() {
+	<-db.Context().Done()
+	db.FinishAndWait(nil) // blocks until subtasks and callbacks are done
+	conn.Close()          // runs after the subtasks have finished
+}()
 ```
 
-## Testing Notes
+Here `db` is a `needFinish=true` task, and the goroutine finishes it.
 
-### Test Helper
+## Finish, FinishAndWait, and timeouts
 
-The package provides `testCleanup()` for resetting the root task between tests:
+| Call | Effect |
+| --- | --- |
+| `Finish(reason)` | Cancels the task's context with `reason` as the cause, marks the task finished (which releases its `OnFinished` callbacks), and returns without waiting. The task leaves its parent's set of children once its own children and callbacks are done. |
+| `FinishAndWait(reason)` | Same, then blocks until the task's children and callbacks have finished, or the wait times out. |
+| `FinishCause()` | `context.Cause` of the task's context: `nil` while the task is running. |
+
+`reason` may be `nil` (the cause is `context.Canceled`), an `error`, a `string`,
+or any value, which is formatted with `%v`.
+
+Timeout rules:
+
+- Each wait gives up after 3 seconds. The value is fixed and not configurable.
+- When a wait times out, the stuck report is logged at `Warn` through
+  [`logging`](../logging/README.md) and the task detaches from its parent anyway.
+  Callbacks still running continue in their goroutines.
+- `WaitExit(seconds)` sets one budget for the whole shutdown. During shutdown no
+  individual wait outlasts the remaining budget, and the root waits `seconds`
+  plus 100 ms. Tasks that miss the deadline stay in the tree so the final report
+  can name them.
+- `WaitExit(0)` leaves no budget: unless the tree is already empty it returns
+  within about 100 ms, having reported what was left.
+
+A stuck report is one `Warn` message such as:
+
+```text
+root stucked callbacks: 0, stucked children: 1 (waiting for children: context deadline exceeded)
+  • children
+    • app
+```
+
+The process-wide root is canceled with the cause `task.ErrProgramExiting`.
+`errors.Is(context.Cause(ctx), task.ErrProgramExiting)` tells a component that
+the program is stopping rather than that one subtree was canceled.
+
+```mermaid
+sequenceDiagram
+    participant Owner
+    participant P as Parent task
+    participant C as Child task
+    Owner->>P: Finish(reason)
+    P->>P: cancel context (cause = reason)
+    P-->>C: child context canceled (same cause)
+    par each task
+        P->>P: OnCancel callbacks start
+    and
+        C->>C: OnCancel callbacks start, work stops
+    end
+    C->>P: child detaches from P once its own work is done
+    P->>P: OnFinished callbacks start once P is finished
+    Note over P: FinishAndWait returns when children and<br/>callbacks are done, or after the timeout
+```
+
+## Callbacks
+
+- `OnCancel(about, fn)` and `OnFinished(about, fn)` each run `fn` in its own
+  goroutine. Callbacks of one task run concurrently, in no particular order.
+- `about` names the callback in stuck reports and panic logs.
+- Register callbacks before the task can be canceled. A callback registered
+  after cancellation may never run, and the task is then reported as stuck. For
+  example, a `FinishAndWait` after such a registration waits out the full 3
+  seconds.
+- `OnFinished` runs when the task itself is finished. It does not wait for the
+  task's subtasks. Use `FinishAndWait` when work must follow the subtasks.
+- A panic in a callback is recovered and logged at `Error` with the fields
+  `error` and `callback`. With `-tags debug` it is logged and then re-raised, so
+  the process crashes with a stack trace.
+- A task is not finished until its callbacks return. Keep callbacks short
+  relative to the shutdown budget: one that is still running when the budget ends
+  is reported as stuck.
+
+## Context values
 
 ```go
-func TestMyFeature(t *testing.T) {
-    t.Cleanup(task.testCleanup)
+type tenantKey struct{}
 
-    task := task.RootTask("test", true)
-    // ...
+t := task.RootTask("server", false)
+t.SetValue(tenantKey{}, "acme")
+
+child := t.Subtask("handler", false)
+child.GetValue(tenantKey{})        // "acme"
+child.Context().Value(tenantKey{}) // "acme"
+```
+
+Values flow from a task down to its descendants, never up to an ancestor.
+`SetValue` and `GetValue` are safe for concurrent use, and a value set after
+`Context()` was called is still visible through that context. Use an unexported
+key type as with `context.WithValue`.
+
+`Context()` returns a normal `context.Context`. You can pass it to libraries or
+derive from it with `context.WithTimeout`.
+
+The [`events`](../events/README.md) package uses this mechanism to carry an event
+history, and `events.SetCtx` accepts a `*task.Task`.
+
+## Rules and pitfalls
+
+1. Call `WaitExit` for shutdown. Do not install your own signal handler and
+   then call `Finish` before `WaitExit`: `WaitExit` registers its own handler and
+   waits for another signal. Callers cannot finish the hidden process-wide root,
+   but a task returned by `RootTask` is an ordinary child that you may finish.
+2. Every `needFinish=true` task needs exactly one meaningful `Finish`. Without
+   it, shutdown stalls until the timeout and the task is reported.
+3. A second `Finish` or `FinishAndWait` on the same task is safe but blocks, for
+   up to the 3 second limit, until the task's pending children and callbacks are
+   done. A `defer t.Finish(nil)` that runs after an explicit `Finish` therefore
+   stalls while callbacks are still running.
+4. Do not create subtasks or register callbacks after `Finish` on the task or its
+   parent. Create them first.
+5. Finish short-lived subtasks. A subtask stays in its parent's set of children,
+   and in the parent's context tree, until it finishes. Creating one per request
+   under a long-lived parent without finishing it leaks.
+6. Callbacks and goroutines that ignore `Context().Done()` hold shutdown up. The
+   stuck report lists them by task path and callback name.
+7. `WaitExit` calls `signal.Notify` and never stops it. After it returns,
+   SIGINT, SIGTERM, and SIGHUP no longer terminate the process by default.
+8. Nothing is logged unless the application installed a logger with
+   [`logging.SetLogger`](../logging/README.md). Task behavior does not depend on
+   whether a logger is installed.
+9. The process-wide root stays canceled after shutdown, so tasks created later
+   are canceled from the start.
+
+## Testing
+
+Use `GetTestTask` as the parent of the code under test. It returns a task whose
+context ends with the test, cached per `testing.TB`, and not attached to the
+process-wide root. Do not call `Finish` on that task itself: it needs no
+cleanup, and it is not part of the shutdown tree. Create a subtask under it when
+the test needs a scope to cancel.
+
+```go
+package worker_test
+
+import (
+	"testing"
+
+	"github.com/yusing/goutils/task"
+)
+
+func TestWorkerStopsWithItsScope(t *testing.T) {
+	scope := task.GetTestTask(t).Subtask("scope", true)
+
+	worker := scope.Subtask("worker", true)
+	stopped := false
+	go func() {
+		defer worker.Finish(nil)
+		<-worker.Context().Done()
+		stopped = true
+	}()
+
+	scope.FinishAndWait(nil) // cancels the worker and waits for it to finish
+	if !stopped {
+		t.Fatal("worker did not stop")
+	}
 }
 ```
 
-### Determinism
+Tasks made with `RootTask` in a test hang off the process-wide root for the rest
+of the test binary. Prefer `GetTestTask`. The package's own reset helper is
+unexported, so external tests cannot restore the root.
 
-- Tests use `taskCleanup()` to ensure isolation
-- Time-based operations (timeouts) may vary slightly
-- Use `testTask()` helper for consistent setup
+## API reference
 
-### Test Coverage
+| Symbol | Notes |
+| --- | --- |
+| `RootTask(name string, needFinish bool) *Task` | Subtask of the process-wide root. |
+| `RootContext() context.Context` | Context of the process-wide root. It is canceled at shutdown with cause `ErrProgramExiting`. |
+| `RootContextCanceled() <-chan struct{}` | Its `Done` channel. |
+| `OnProgramExit(about string, fn func())` | `OnCancel` on the root. `fn` starts when shutdown begins, and shutdown waits for it. |
+| `WaitExit(shutdownTimeout int)` | Waits for SIGINT, SIGTERM, or SIGHUP, then shuts down. The timeout is in seconds. |
+| `ErrProgramExiting` | Cause of the root's cancellation. |
+| `(*Task).Subtask(name string, needFinish bool) *Task` | Creates a child. |
+| `Context`, `Name`, `String`, `MarshalText` | Context, short name, dotted path, and the dotted path as text. |
+| `Finish`, `FinishAndWait`, `FinishCause` | See above. |
+| `OnCancel`, `OnFinished` | Callbacks, see above. |
+| `SetValue`, `GetValue` | Values. |
+| `Parent` | Interface implemented by `*Task`: `Context`, `Subtask`, `Name`, `Finish`, `OnCancel`, `SetValue`, `GetValue`. |
+| `TaskStarter` | `Start(parent Parent) error` and `Task() *Task`. The implementation must finish its subtask when `Start` fails or the object ends. |
+| `TaskFinisher` | `Finish(reason any)`. |
+| `GetTestTask(tb testing.TB) *Task` | Test parent task. |
+| `Dependencies[T comparable]`, `NewDependencies`, `Callback` | Support types: a concurrent set that can be waited on until it is empty, and the opaque callback record. Normally not used directly. |
 
-- `task_test.go`: Lifecycle, callbacks, shutdown scenarios
-- `values_test.go`: Context value propagation
+Run `go doc -all github.com/yusing/goutils/task` for signatures and doc comments.
 
-### Build Tags
+## Build tags
 
-- Default: Production build (minimal logging)
-- `-tags debug`: Development build with detailed logging and panic stacks
+| Tag | Effect |
+| --- | --- |
+| `debug` | Logs `task <path> started` and `task <path> finished` at `Info` for every subtask, and makes a recovered callback panic fatal after logging. |
 
-## Debug Mode
+## Dependencies
 
-When built with `-tags debug`:
-
-- Task start/finish events are logged at Info level
-- Panics in callbacks include full stack traces
-- Useful for development and troubleshooting lifecycle issues
-
-```bash
-go build -tags debug -o myapp ./cmd/myapp
-```
+`github.com/puzpuzpuz/xsync/v4`, plus `intern`, `errs`, and
+[`logging`](../logging/README.md) from this module.

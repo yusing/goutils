@@ -1,421 +1,185 @@
 # goutils/pool
 
-Thread-safe object pool for managing collections of objects with string keys.
+A concurrent registry of keyed objects. Use it to track live things such as
+servers, routes, or watched containers: add by key, look up, remove, and list in
+a stable order, with optional logging and a bounded event history of changes.
 
-## Overview
+This is not an object-reuse pool. For reusable byte buffers see
+[`synk`](../synk/README.md).
 
-The `pool` package provides a generic, thread-safe pool for managing objects that have unique string identifiers. It uses `xsync.Map` for lock-free concurrent operations and implements a tombstone pattern for safe deletion with TTL-based cleanup.
+## Install
 
-### Purpose
-
-- Manage collections of keyed objects in concurrent environments
-- Provide deterministic object replacement through the `Preferable` interface
-- Support soft deletes with time-based reclamation
-- Enable sorted iteration and bulk retrieval
-
-### Non-goals
-
-- Does not provide LRU or eviction policies
-- Does not handle object lifecycle (creation/destruction)
-- Does not provide pooling of reusable object instances (this is a registry, not an object pool)
-
-### Stability
-
-The public API is stable. The `entry[T]` internal type and tombstone implementation details may change.
-
-## Public API
-
-### Exported Types
-
-```go
-type Pool[T Object] struct {
-    // m is the internal map storing entries with tombstone support
-    m *xsync.Map[string, entry[T]]
-    // name is the pool identifier used in log messages
-    name string
-    // disableLog controls whether add/remove operations are logged
-    disableLog atomic.Bool
-    // tombs tracks the number of active tombstones for purge thresholding
-    tombs atomic.Uint32
-}
+```sh
+go get github.com/yusing/goutils@v0.8.0
 ```
 
-**Invariants:**
-
-- All objects must have unique `Key()` values
-- `Key()` must be stable for the lifetime of the object in the pool
-- The pool maintains strong consistency for all operations
-
-#### Object Interface
-
 ```go
-type Object interface {
-    Key() string  // Unique identifier for the object
-    Name() string // Display name for logging and sorting
-}
+import "github.com/yusing/goutils/pool"
 ```
 
-All pooled objects must implement this interface. `Key()` must return a unique string; `Name()` is used for logging and sorted output.
+The package is in the root module and needs Go 1.27 or later.
 
-#### ObjectWithDisplayName Interface
-
-```go
-type ObjectWithDisplayName interface {
-    Object
-    DisplayName() string // Alternative display name
-}
-```
-
-Extends `Object` for objects that have a separate display name from their internal name. The display name takes precedence in log messages.
-
-#### Preferable Interface
-
-```go
-type Preferable interface {
-    PreferOver(other any) bool // Returns true if this object should replace 'other'
-```
-
-Allows objects to express deterministic replacement preference when multiple objects with the same key are added. When `AddKey` is called with a key that already exists, the new object replaces the existing one only if `new.PreferOver(old)` returns `true`.
-
-### Exported Functions and Methods
-
-#### New
-
-```go
-func New[T Object](name, eventKey string) *Pool[T]
-```
-
-Creates a new pool with the given name. The name is used as a prefix in log messages.
-
-#### SetEventHistory
-
-```go
-func (p *Pool[T]) SetEventHistory(history *events.History)
-```
-
-Installs the owning runtime's event sink. Add/remove events are emitted only to
-that history; the pool does not write to a mutable process-global collector.
-
-**Concurrency:** Safe to call during initialization.
-
-#### Add
-
-```go
-func (p *Pool[T]) Add(obj T)
-```
-
-Adds an object to the pool using `obj.Key()` as the key. If an object with the same key exists and is not a tombstone, the `Preferable` interface is checked to determine replacement.
-
-**Behavior:**
-
-- If key does not exist: object is added, logged as "added"
-- If key exists with non-tombstone: replacement depends on `Preferable`
-- If key exists with tombstone < TTL old: logged as "reloaded"
-- Tombstone counter is decremented if reloading a recent tombstone
-
-**Concurrency:** Safe for concurrent use.
-
-#### AddKey
-
-```go
-func (p *Pool[T]) AddKey(key string, obj T)
-```
-
-Same as `Add` but with an explicit key. The key is used instead of `obj.Key()`.
-
-**Concurrency:** Safe for concurrent use.
-
-#### AddIfNotExists
-
-```go
-func (p *Pool[T]) AddIfNotExists(obj T) (actual T, added bool)
-```
-
-Adds an object only if the key does not exist or has an expired tombstone.
-
-**Returns:**
-
-- `(existingObject, false)` if key exists with non-tombstone
-- `(existingObject, false)` if key exists with recent tombstone
-- `(newObject, true)` if key does not exist or tombstone expired
-
-**Concurrency:** Safe for concurrent use.
-
-#### Del
-
-```go
-func (p *Pool[T]) Del(obj T)
-```
-
-Marks an object as deleted using a tombstone. The object remains in the map for `recentlyRemovedTTL` (1 second) to prevent rapid add/delete cycles.
-
-**Concurrency:** Safe for concurrent use.
-
-#### DelKey
-
-```go
-func (p *Pool[T]) DelKey(key string)
-```
-
-Deletes by key without requiring the full object.
-
-**Concurrency:** Safe for concurrent use.
-
-#### Get
-
-```go
-func (p *Pool[T]) Get(key string) (T, bool)
-```
-
-Retrieves an object by key.
-
-**Returns:**
-
-- `(object, true)` if key exists and is not a tombstone
-- `(zeroValue, false)` if key does not exist or is a tombstone
-
-**Concurrency:** Safe for concurrent use.
-
-#### Size
-
-```go
-func (p *Pool[T]) Size() int
-```
-
-Returns the total number of entries including tombstones.
-
-**Concurrency:** Safe; returns an approximate count if called during concurrent modifications.
-
-#### Clear
-
-```go
-func (p *Pool[T]) Clear()
-```
-
-Removes all entries including tombstones from the pool.
-
-**Concurrency:** Safe for concurrent use.
-
-#### Iter
-
-```go
-func (p *Pool[T]) Iter(fn func(k string, v T) bool)
-```
-
-Iterates over all non-tombstone entries. The callback receives the key and object. Iteration stops if the callback returns `false`.
-
-**Concurrency:** Safe for concurrent use; may observe partial results if entries are modified during iteration.
-
-#### Slice
-
-```go
-func (p *Pool[T]) Slice() []T
-```
-
-Returns a sorted slice of all non-tombstone objects, sorted by `Name()`.
-
-**Concurrency:** Safe for concurrent use.
-
-#### DisableLog
-
-```go
-func (p *Pool[T]) DisableLog(v bool)
-```
-
-Disables or enables logging of add/remove operations. When `true`, operations are not logged at INFO level.
-
-**Default:** `false` (diagnostics forwarded when an application logger is installed)
-
-#### PurgeExpiredTombs
-
-```go
-func (p *Pool[T]) PurgeExpiredTombs() (purged int)
-```
-
-Removes all tomstones older than `recentlyRemovedTTL` (1 second). Called automatically when the tombstone count exceeds the threshold (256), but can also be called manually.
-
-**Returns:** Number of tombstones purged
-
-**Concurrency:** Safe for concurrent use.
-
-## Usage Example
+## Quick start
 
 ```go
 package main
 
 import (
-    "fmt"
+	"fmt"
 
-    "github.com/yusing/godoxy/goutils/pool"
+	"github.com/yusing/goutils/events"
+	"github.com/yusing/goutils/pool"
 )
 
+// Server satisfies pool.Object.
 type Server struct {
-    id   string
-    name string
-    addr string
+	ID    string
+	Label string
+	Addr  string
 }
 
-func (s Server) Key() string  { return s.id }
-func (s Server) Name() string { return s.name }
+func (s Server) Key() string  { return s.ID }
+func (s Server) Name() string { return s.Label }
 
 func main() {
-    p := pool.New[Server]("servers")
+	history := events.NewHistory()
 
-    // Add servers
-    p.Add(Server{"1", "web-01", "10.0.0.1"})
-    p.Add(Server{"2", "web-02", "10.0.0.2"})
+	servers := pool.New[Server]("servers", "servers")
+	servers.SetEventHistory(history) // optional; call before sharing the pool
 
-    // Retrieve a server
-    if srv, ok := p.Get("1"); ok {
-        fmt.Println("Found:", srv.name)
-    }
+	servers.Add(Server{"2", "web-02", "10.0.0.2"})
+	servers.Add(Server{"1", "web-01", "10.0.0.1"})
 
-    // Delete a server
-    p.Del(Server{"1", "web-01", "10.0.0.1"})
+	if s, ok := servers.Get("1"); ok {
+		fmt.Println("found", s.Addr)
+	}
+	for _, s := range servers.Slice() { // sorted by Name()
+		fmt.Println(s.Label)
+	}
 
-    // Iterate over all servers
-    p.Iter(func(key string, s Server) bool {
-        fmt.Println(key, s.name)
-        return true
-    })
-
-    // Get sorted slice
-    all := p.Slice()
-    for _, s := range all {
-        fmt.Println(s.Name())
-    }
+	servers.DelKey("1")
+	_, ok := servers.Get("1")
+	fmt.Println("after delete:", ok, "events:", len(history.Get()))
 }
 ```
 
-## Architecture
+Output:
 
-### Core Components
-
-```mermaid
-classDiagram
-    class Pool {
-        -m: xsync.Map[string, entry[T]]
-        -name: string
-        -disableLog: atomic.Bool
-        -tombs: atomic.Uint32
-        +Add(obj T)
-        +Get(key string) (T, bool)
-        +Del(obj T)
-        +Iter(fn func)
-        +Slice() []T
-    }
-
-    class entry {
-        -obj: T
-        -removed: removedInfo
-        -tomb: bool
-    }
-
-    class Object {
-        <<interface>>
-        +Key() string
-        +Name() string
-    }
-
-    class ObjectWithDisplayName {
-        <<interface>>
-        +DisplayName() string
-    }
-
-    class Preferable {
-        <<interface>>
-        +PreferOver(other any) bool
-    }
-
-    Pool --> entry : stores
-    Pool --> Object : constrains T
-    Object <|-- ObjectWithDisplayName : extends
-    Object <|-- Preferable : optional
+```text
+found 10.0.0.1
+web-01
+web-02
+after delete: false events: 2
 ```
 
-### Data Flow
+## Concepts
 
-```mermaid
-sequenceDiagram
-    participant C as Caller
-    participant P as Pool
-    participant M as xsync.Map
-    participant T as TombPurge
+`New[T Object](name, eventKey string) *Pool[T]`
 
-    C->>P: Add(obj)
-    P->>M: Load(key)
-    alt key exists, non-tomb
-        M-->>P: existing entry
-        alt object is Preferable
-            P->>P: PreferOver(existing)
-        end
-    end
-    P->>M: Store(key, entry)
-    P->>P: logAction()
+| Argument | Used for |
+| --- | --- |
+| `name` | A human-readable pool name. It prefixes every log message (`servers: added web-01`) and is returned by `Name()`. |
+| `eventKey` | The suffix of the event category. Events are recorded with category `"pool." + eventKey`. It is ignored unless an event history is set. |
 
-    C->>P: Del(obj)
-    P->>M: Load(key)
-    P->>M: Store(key, entry{tomb: true})
-    P->>T: check threshold
-    T-->>P: PurgeExpiredTombs()
+Objects implement `Object`:
 
-    C->>P: Get(key)
-    P->>M: Load(key)
-    alt not found or tomb
-        M-->>P: nil/false
-    else exists, non-tomb
-        M-->>P: object, true
-    end
+```go
+type Object interface {
+	Key() string  // unique, stable while the object is in the pool
+	Name() string // used for sorting and logs
+}
 ```
 
-### Tombstone Mechanism
+Optional interfaces:
 
-Deleted objects are marked with a tombstone and retained for 1 second (`recentlyRemovedTTL`). This prevents rapid add/delete cycles from causing inconsistent state. When the tombstone count exceeds 256, `PurgeExpiredTombs` is automatically called.
+- `ObjectWithDisplayName` adds `DisplayName() string`. Log messages then read
+  `servers: added <display> (<name>)`. Sorting still uses `Name()`.
+- `Preferable` adds `PreferOver(other any) bool`, checked on the new object
+  when its key is already live. The new object replaces the old one only if
+  `PreferOver` returns true. `other` is the object currently stored, as a `T`.
+  Without it, the last `Add` wins.
 
-## Observability
+## Operations
 
-### Logs
+| Method | Behavior |
+| --- | --- |
+| `Add(obj)` / `AddKey(key, obj)` | Stores `obj` under `obj.Key()` or the explicit key. A live key is replaced unless `Preferable` says to keep the existing one. A key removed less than 1 s ago is reported as `reloaded`, otherwise as `added`. |
+| `AddIfNotExists(obj) (actual, added)` | Stores `obj` only if its key is free. If a live object holds the key, returns it and `false`. It does not consult `Preferable`. See the limitation below for removed keys. |
+| `Get(key) (T, bool)` | The live object, or the zero value and `false`. |
+| `Del(obj)` / `DelKey(key)` | Removes logically. The key stops being visible to `Get`, `Iter`, and `Slice` at once, but an internal tombstone remains. Removing a missing key does nothing. |
+| `Iter(fn func(key string, v T) bool)` | Calls `fn` for every live entry, in no particular order, until `fn` returns false. Concurrent changes may or may not be seen. |
+| `Slice() []T` | A new slice of live objects sorted by `Name()`. |
+| `Size() int` | Number of stored entries, tombstones included. It can exceed the number of live objects. |
+| `Clear()` | Drops every entry silently: no log message and no event. |
+| `PurgeExpiredTombs() int` | Deletes tombstones older than 1 s, emits their `removed` log and event, and returns how many it purged. |
+| `DisableLog(bool)` | Stops this pool's log messages. Events are still recorded. |
+| `SetEventHistory(*events.History)` | Records changes in the history. |
+| `Name() string` | The `name` given to `New`. |
 
-All operations are logged at INFO level unless disabled via `DisableLog`:
+### Removal and tombstones
 
-- **Add**: `"poolname: added displayname (name)"` or `"poolname: added name"`
-- **Delete**: `"poolname: removed displayname (name)"` or `"poolname: removed name"`
-- **Reload**: `"poolname: reloaded displayname (name)"`
+`Del` does not log or record anything. The `removed` log message and event are
+produced when the tombstone is purged by `PurgeExpiredTombs`. The pool calls it
+itself only when more than 256 tombstones have accumulated. If you rely on
+removal logs, removal events, or an accurate `Size()`, call `PurgeExpiredTombs`
+periodically, for example from a ticker. Re-adding a key replaces its tombstone
+and produces `reloaded` or `added` instead of `removed`.
 
-The pool `name` is used as a message prefix. Diagnostics are sent through
-[`goutils/logging`](../logging/README.md); no output is produced until the
-application installs a logger. Event history remains independent of logging.
+## Events and logging
 
-### Debug Build
+With `SetEventHistory(h)` the pool adds an event to `h` for every change:
 
-When built with `-tags debug`, the pool logs a warning with stacktrace if a key already exists during `AddKey`, helping identify duplicate key issues during development.
+| Action | `Data` |
+| --- | --- |
+| `added`, `reloaded` | The object itself. |
+| `removed` | An internal record of the removed object. |
 
-## Performance Characteristics
+Events have level `info`, category `"pool." + eventKey`, and the history keeps
+only the newest 100 events across all producers; see
+[`events`](../events/README.md). `Data` holds the pooled value itself. If `T` is a pointer type, later mutations
+show up in events already recorded, so keep pooled objects effectively immutable. To stream the history as JSON, the objects must
+marshal with `encoding/json/v2`: a struct with no exported fields cannot be
+marshaled and ends the stream with an error.
 
-- **Lock-free reads**: `Get` and `Iter` use lock-free operations via `xsync.Map`
-- **Write contention**: `Add`, `Del`, and `Clear` may contend on hash bucket locks
-- **Memory**: Each entry has overhead for tombstone tracking (~32 bytes)
-- **Slice sorting**: `Slice` sorts by `Name()` which is O(n log n)
+Log messages go through [`logging`](../logging/README.md) at `Info`, and the
+package is silent until the application calls `logging.SetLogger`. `DisableLog`
+turns the pool's messages off.
 
-## Failure Modes
+## Concurrency
 
-| Failure                          | Behavior                          | Recovery                             |
-| -------------------------------- | --------------------------------- | ------------------------------------ |
-| Duplicate key without Preferable | New object silently replaces old  | Use Preferable or fix key assignment |
-| Key not found on Get/Del         | Returns `false` / no-op           | Caller handles missing key           |
-| Tombstone threshold exceeded     | Automatic purge of old tombstones | Purge is non-blocking                |
+All methods are safe for concurrent use, with these exceptions and limits:
+
+- Call `SetEventHistory` during setup, before the pool is shared. It is a plain
+  field write.
+- `Add`, `Del`, and `AddKey` are each a read followed by a write, not one atomic
+  step. Two writers for the same key can interleave. Serialize writers per key if
+  you depend on `Preferable` outcomes or exact event order.
+
+## Known limitations
+
+These describe the current implementation. Update this section when they are
+fixed.
+
+- `AddIfNotExists` on a key whose tombstone is older than 1 s but has not been
+  purged returns the zero value and `false` and does not store `obj`. Within 1 s
+  of removal it stores `obj` and reports `reloaded`. Calling `PurgeExpiredTombs`
+  first avoids the stale tombstone.
+- `Clear` does not reset the internal tombstone count. If keys were removed and
+  not yet purged, a later `Slice` call panics (`makeslice: cap out of range`)
+  while the pool holds fewer entries than that stale count. Call `Clear` only when
+  no removals are pending: wait more than 1 s after the last `Del` and call
+  `PurgeExpiredTombs` first.
+- Because `removed` events carry an internal record with no exported fields, a
+  history that contains one cannot be streamed with `History.ListenJSON`: the
+  stream stops at that event with a marshal error.
+
+## Build tags
+
+| Tag | Effect |
+| --- | --- |
+| `debug` | `Add` and `AddKey` log a `Warn` with a stack trace, `<name>: key <key> already exists`, when they are about to replace a live key. |
 
 ## Dependencies
 
-- **github.com/puzpuzpuz/xsync/v4**: Lock-free concurrent map
-- **goutils/logging**: Framework-neutral diagnostics configured by the application
-
-## Testing Notes
-
-The package tests cover:
-
-- Concurrent add/get operations
-- Tombstone TTL behavior
-- Preference-based replacement
-- Sorted slice output
-- Debug build stacktrace verification
+`github.com/puzpuzpuz/xsync/v4` for the concurrent map, plus `events` and
+[`logging`](../logging/README.md) from this module.

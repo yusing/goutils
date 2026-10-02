@@ -1,84 +1,98 @@
 # goutils/http/accesslog
 
-HTTP access logging interface for recording request and response details.
+The `AccessLogger` interface that [`reverseproxy`](../reverseproxy/README.md) calls to
+record proxied requests and proxy errors. The package contains only the interface;
+you supply the implementation (a file, stdout, `slog`, a metrics sink, and so on).
+Package name: `accesslog`.
 
-## Overview
+## Install
 
-The `accesslog` package defines an interface for logging HTTP request and response information. This abstraction allows different logging implementations (e.g., JSON logging, file logging, stdout logging) to be plugged into the reverse proxy and other HTTP handlers.
-
-## Architecture
-
-### Core Components
-
-```mermaid
-classDiagram
-    class AccessLogger {
-        <<interface>>
-        +Log(req *http.Request, res *http.Response)
-        +LogError(req *http.Request, err error)
-        +Close() error
-    }
+```sh
+go get github.com/yusing/goutils/http@v0.8.0
 ```
 
-The `AccessLogger` interface provides three methods:
+```go
+import "github.com/yusing/goutils/http/accesslog"
+```
 
-- **Log**: Called after a successful request/response cycle to log the request and response
-- **LogError**: Called when an error occurs during request processing
-- **Close**: Called to clean up resources when the logger is no longer needed
+`accesslog` lives in the `github.com/yusing/goutils/http` module (Go 1.27), has no
+dependencies of its own, and does not need the `-checklinkname=0` linker flag. To
+attach a logger to a proxy you also need
+`go get github.com/yusing/goutils/http/reverseproxy@v0.8.0`, and binaries that link
+the proxy need the flag described in the [`httputils` README](../README.md#required-linker-flag).
 
-## API Reference
-
-### AccessLogger Interface
+## The interface
 
 ```go
 type AccessLogger interface {
-    Log(req *http.Request, res *http.Response)
-    LogError(req *http.Request, err error)
-    Close() error
+	LogRequest(req *http.Request, res *http.Response)
+	LogError(req *http.Request, err error)
+	Close() error
 }
 ```
 
-### Usage Example
+- `LogRequest` is called once for every proxied request that reached the upstream
+  round trip, after the response has been handled. `res` is the upstream response,
+  or the synthetic `502 Bad Gateway` response the proxy generates when the origin is
+  unreachable. By then its body has been consumed or closed, so read only the status
+  and headers.
+- `LogError` is called with the request and the error whenever the proxy handles an
+  error: a failed round trip (before `LogRequest`, including one aborted by the
+  client's cancellation), a failing `ModifyResponse`, an invalid `Upgrade` header,
+  or a write error while copying the response to the client.
+- `Close` is never called by the proxy. The code that creates the logger owns its
+  lifetime and calls `Close` itself.
+
+The proxy calls these methods from many request goroutines at once, so an
+implementation must be safe for concurrent use.
+
+## Example
 
 ```go
 package main
 
 import (
-    "net/http"
-    "github.com/yusing/goutils/http/accesslog"
+	"log/slog"
+	"net/http"
+	"net/url"
+
+	"github.com/yusing/goutils/http/accesslog"
+	"github.com/yusing/goutils/http/reverseproxy"
 )
 
-// CustomAccessLogger implements accesslog.AccessLogger
-type CustomAccessLogger struct {
-    // implementation details
+// slogAccessLog writes one structured line per request and per error.
+type slogAccessLog struct{ logger *slog.Logger }
+
+var _ accesslog.AccessLogger = slogAccessLog{}
+
+func (l slogAccessLog) LogRequest(req *http.Request, res *http.Response) {
+	l.logger.Info("request", "method", req.Method, "path", req.URL.Path, "status", res.StatusCode)
 }
 
-func (l *CustomAccessLogger) Log(req *http.Request, res *http.Response) {
-    // Log successful request
+func (l slogAccessLog) LogError(req *http.Request, err error) {
+	l.logger.Error("proxy error", "path", req.URL.Path, "error", err)
 }
 
-func (l *CustomAccessLogger) LogError(req *http.Request, err error) {
-    // Log error
-}
+func (slogAccessLog) Close() error { return nil }
 
-func (l *CustomAccessLogger) Close() error {
-    // Cleanup
-}
+func main() {
+	target, err := url.Parse("http://localhost:8080")
+	if err != nil {
+		panic(err)
+	}
 
-// Usage in reverse proxy
-func setupProxy() *reverseproxy.ReverseProxy {
-    logger := &CustomAccessLogger{}
-    return reverseproxy.NewReverseProxy("my-proxy", targetURL, transport,
-        reverseproxy.WithAccessLogger(logger))
+	logger := slogAccessLog{slog.Default()}
+	defer logger.Close()
+
+	proxy := reverseproxy.NewReverseProxy("backend", target, http.DefaultTransport)
+	proxy.AccessLogger = logger
+	_ = http.ListenAndServe(":8000", proxy)
 }
 ```
 
-## Integration Points
+## Related packages
 
-This package is used by:
-
-- `goutils/http/reverseproxy` - The reverse proxy logs requests and errors through this interface
-
-## Related Packages
-
-- [reverseproxy](../reverseproxy/README.md) - Uses AccessLogger for logging
+- [reverseproxy](../reverseproxy/README.md) holds the `AccessLogger` field and calls
+  the methods above.
+- [httpheaders](../httpheaders/README.md) provides header helpers for custom
+  logging.

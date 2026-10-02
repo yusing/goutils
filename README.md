@@ -34,6 +34,12 @@ go get github.com/yusing/goutils/http@v0.8.0
 | `events/http` | HTTP blocked-event reporting |
 | `http/reverseproxy/integrationtest` | Proxy integration tests, not an application dependency |
 
+Binaries and tests that link the `http`, `server`, `http/reverseproxy`, or
+`http/websocket` modules must be built with `-ldflags=-checklinkname=0`, because
+those packages use `go:linkname` into standard-library and dependency internals.
+Without it, linking fails with an `invalid reference` error. The root module and
+the `cache` module do not need the flag.
+
 Diagnostics require an installed [application logger](logging/README.md).
 Nested modules may retain their own framework dependencies. HTTP logging helpers
 accept a message and optional fields instead of returning a zerolog event.

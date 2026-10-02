@@ -1,192 +1,79 @@
-# goutils/strutils/ansi
+# goutils/strings/ansi
 
-ANSI color code utilities for terminal output formatting.
+ANSI escape-code helpers: a few color constants, wrappers for error, success, warning,
+and info text, and a function that strips the codes again.
 
-## Overview
+## Install
 
-The `ansi` package provides constants and functions for applying ANSI escape codes to terminal text. It includes predefined color combinations for common use cases (errors, warnings, success messages) and utilities for stripping ANSI codes from strings.
-
-## Constants
-
-### Basic Colors
-
-```go
-const (
-    BrightRed    = "\x1b[91m"
-    BrightGreen  = "\x1b[92m"
-    BrightYellow = "\x1b[93m"
-    BrightCyan   = "\x1b[96m"
-    BrightWhite  = "\x1b[97m"
-    Bold         = "\x1b[1m"
-    Reset        = "\x1b[0m"
-)
+```sh
+go get github.com/yusing/goutils@v0.8.0
 ```
 
-### Highlighted Colors (Bold + Color)
-
 ```go
-const (
-    HighlightRed    = BrightRed + Bold
-    HighlightGreen  = BrightGreen + Bold
-    HighlightYellow = BrightYellow + Bold
-    HighlightCyan   = BrightCyan + Bold
-    HighlightWhite  = BrightWhite + Bold
-)
+import "github.com/yusing/goutils/strings/ansi"
 ```
 
-## API Reference
+The package name is `ansi`. It uses only the standard library and needs Go 1.27 or newer.
 
-### Styled Output Functions
-
-#### Error
-
-```go
-func Error(s string) string
-```
-
-Returns the string wrapped in HighlightRed (bright red + bold).
-
-#### Success
-
-```go
-func Success(s string) string
-```
-
-Returns the string wrapped in HighlightGreen (bright green + bold).
-
-#### Warning
-
-```go
-func Warning(s string) string
-```
-
-Returns the string wrapped in HighlightYellow (bright yellow + bold).
-
-#### Info
-
-```go
-func Info(s string) string
-```
-
-Returns the string wrapped in HighlightCyan (bright cyan + bold).
-
-### Low-Level Functions
-
-#### WithANSI
-
-```go
-func WithANSI(s string, ansi string) string
-```
-
-Wraps a string with arbitrary ANSI codes. The ANSI code is prepended and Reset is appended.
-
-#### StripANSI
-
-```go
-func StripANSI(s string) string
-```
-
-Removes all ANSI escape codes from a string, returning plain text.
-
-## Usage Examples
-
-### Basic Styling
+## Quick start
 
 ```go
 package main
 
 import (
-    "fmt"
-    "github.com/yusing/goutils/strings/ansi"
+	"fmt"
+
+	"github.com/yusing/goutils/strings/ansi"
 )
 
 func main() {
-    fmt.Println(ansi.Error("This is an error message"))
-    fmt.Println(ansi.Success("Operation completed successfully"))
-    fmt.Println(ansi.Warning("This is a warning"))
-    fmt.Println(ansi.Info("Here is some information"))
+	msg := ansi.Error("disk full")
+	fmt.Printf("%q\n", msg)
+	fmt.Println(ansi.StripANSI(msg))
+	fmt.Printf("%q\n", ansi.WithANSI("ok", ansi.BrightGreen))
 }
 ```
 
 Output:
 
-```
-[1;91mThis is an error message[0m
-[1;92mOperation completed successfully[0m
-[1;93mThis is a warning[0m
-[1;96mHere is some information[0m
-```
-
-### Custom ANSI Codes
-
-```go
-// Use basic color without bold
-fmt.Println(ansi.WithANSI("Blue text", ansi.BrightBlue))
-
-// Combine multiple styles
-customStyle := ansi.BrightWhite + ansi.Bold
-fmt.Println(ansi.WithANSI("Bold white", customStyle))
+```text
+"\x1b[91m\x1b[1mdisk full\x1b[0m"
+disk full
+"\x1b[92mok\x1b[0m"
 ```
 
-### Stripping ANSI Codes
+## Functions
 
-```go
-coloredText := ansi.Error("Error message")
-plainText := ansi.StripANSI(coloredText)
-// plainText == "Error message"
-```
+| Function | Result |
+| --- | --- |
+| `Error(s)` | `s` in bold bright red (`HighlightRed`) |
+| `Success(s)` | `s` in bold bright green (`HighlightGreen`) |
+| `Warning(s)` | `s` in bold bright yellow (`HighlightYellow`) |
+| `Info(s)` | `s` in bold bright cyan (`HighlightCyan`) |
+| `WithANSI(s, code)` | `code + s + Reset` for any escape sequence you pass |
+| `StripANSI(s)` | `s` without color and style sequences |
 
-### Logging with Colors
+Every wrapper ends with `Reset`, which clears all attributes. Wrapping text that
+already contains styled text therefore ends the outer style at the first inner `Reset`.
 
-```go
-import "github.com/rs/zerolog"
+## Constants
 
-func logMessage(level string, message string) {
-    switch level {
-    case "error":
-        zerolog.Error().Msg(ansi.Error(message))
-    case "warn":
-        zerolog.Warn().Msg(ansi.Warning(message))
-    case "info":
-        zerolog.Info().Msg(ansi.Info(message))
-    case "success":
-        zerolog.Info().Msg(ansi.Success(message))
-    }
-}
-```
+| Constant | Value |
+| --- | --- |
+| `BrightRed`, `BrightGreen`, `BrightYellow`, `BrightCyan`, `BrightWhite` | `\x1b[91m`, `\x1b[92m`, `\x1b[93m`, `\x1b[96m`, `\x1b[97m` |
+| `Bold` | `\x1b[1m` |
+| `Reset` | `\x1b[0m` |
+| `HighlightRed`, `HighlightGreen`, `HighlightYellow`, `HighlightCyan`, `HighlightWhite` | The matching bright color followed by `Bold`, for example `\x1b[91m\x1b[1m` |
 
-### Predefined Constants Reference
+There are no constants for other colors. Pass the code you need to `WithANSI`, for
+example `ansi.WithANSI("note", "\x1b[94m")` for bright blue.
 
-| Constant          | ANSI Code         | Description          |
-| ----------------- | ----------------- | -------------------- |
-| `BrightRed`       | `\x1b[91m`        | Bright red text      |
-| `BrightGreen`     | `\x1b[92m`        | Bright green text    |
-| `BrightYellow`    | `\x1b[93m`        | Bright yellow text   |
-| `BrightCyan`      | `\x1b[96m`        | Bright cyan text     |
-| `BrightWhite`     | `\x1b[97m`        | Bright white text    |
-| `Bold`            | `\x1b[1m`         | Bold formatting      |
-| `Reset`           | `\x1b[0m`         | Reset all formatting |
-| `HighlightRed`    | `\x1b[91m\x1b[1m` | Bold bright red      |
-| `HighlightGreen`  | `\x1b[92m\x1b[1m` | Bold bright green    |
-| `HighlightYellow` | `\x1b[93m\x1b[1m` | Bold bright yellow   |
-| `HighlightCyan`   | `\x1b[96m\x1b[1m` | Bold bright cyan     |
-| `HighlightWhite`  | `\x1b[97m\x1b[1m` | Bold bright white    |
+## Behavior and limits
 
-## Implementation Details
-
-The package uses:
-
-- `regexp.MustCompile` to create a pattern for stripping ANSI codes: `\x1b\[[0-9;]*m`
-- String concatenation to combine ANSI codes with text
-- The Reset code (`\x1b[0m`) to restore default terminal formatting after styled text
-
-## Compatibility
-
-ANSI escape codes are supported by:
-
-- Most terminal emulators (iTerm2, Terminal.app, GNOME Terminal, etc.)
-- Console2, Windows Terminal
-- Some IDE terminals
-- Not supported in standard Windows cmd.exe without ANSI.sys
-
-For cross-platform compatibility, consider using a library like `github.com/mattn/go-colorable` or `github.com/mattn/go-isatty`.
+- The package always emits the codes. It does not check whether the output is a
+  terminal or honor `NO_COLOR`, so decide that in your program before calling it.
+- `StripANSI` removes only sequences matching `\x1b\[[0-9;]*m` (colors and styles).
+  Cursor movement, screen clearing, and other control sequences are left in place.
+- Other `goutils` packages emit these codes too. For instance, the text of an `errs`
+  error with a subject contains them; use its `Plain` form or `StripANSI` for logs,
+  files, and HTTP responses.

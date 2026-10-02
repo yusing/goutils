@@ -1,361 +1,320 @@
 # goutils/http/websocket
 
-WebSocket connection manager with automatic ping-pong, JSON messaging, and periodic updates.
+Server-side WebSocket helpers for [Gin](https://github.com/gin-gonic/gin) handlers,
+built on [gorilla/websocket](https://github.com/gorilla/websocket). A `Manager`
+upgrades the request, answers an application-level `ping`/`pong` heartbeat, delivers
+incoming messages over a channel, serializes writes, and closes the connection when
+the request context ends. Package name: `websocket`.
 
-## Overview
+## Install
 
-The `websocket` package provides a high-level WebSocket connection manager built on gorilla/websocket. It handles connection upgrades, automatic ping-pong keepalive, JSON encoding/decoding, and periodic data streaming with deduplication support.
-
-## Architecture
-
-```mermaid
-classDiagram
-    class Manager {
-        <<interface>>
-        +Context() context.Context
-        +Close()
-        +Done() <-chan struct#123;#125;
-        +WriteData(typ int, data []byte, timeout time.Duration) error
-        +WriteJSON(data any, timeout time.Duration) error
-        +CopyJSONStream(r io.Reader) error
-        +CopyTextLines(r io.Reader) error
-        +ReadJSON(out any, timeout time.Duration) error
-        +ReadBinary(timeout time.Duration) ([]byte, error)
-        +PeriodicWrite(interval time.Duration, getData func() (any, error), deduplicate ...DeduplicateFunc) error
-        +NewWriter(msgType int) io.Writer
-        +NewReader() io.Reader
-    }
-
-    class Reader {
-        +Read(p []byte) (int, error)
-    }
-
-    class Writer {
-        +Write(p []byte) (int, error)
-    }
-
-    Manager --> Reader : creates
-    Manager --> Writer : creates
+```sh
+go get github.com/yusing/goutils/http/websocket@v0.8.0
 ```
-
-## Data Flow
-
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant M as Manager
-    participant R as Read Routine
-    participant W as Write Routine
-    participant P as Ping Routine
-
-    C->>M: HTTP Request + Upgrade
-    M->>M: Upgrade to WebSocket
-    M->>R: Start Read Routine
-    M->>W: Start Write Routine
-    M->>P: Start Ping Check Routine
-
-    loop Ping-Pong
-        P->>C: Ping (every 3s)
-        C->>P: Pong
-    end
-
-    C->>R: Text Message
-    R->>M: Store in readCh
-
-    M->>C: Write Message
-    W->>C: Data from WriteData
-
-    M->>C: Periodic Updates
-    Note over M: PeriodicWrite with deduplication
-```
-
-## Constants
 
 ```go
-const (
-    TextMessage   = websocket.TextMessage   // 1
-    BinaryMessage = websocket.BinaryMessage // 2
-)
+import "github.com/yusing/goutils/http/websocket"
 ```
 
-## Errors
+Things to know before you add it:
 
-```go
-var (
-    ErrReadTimeout             = errors.New("read timeout")
-    ErrWriteTimeout            = errors.New("write timeout")
-    ErrTextBufferBudgetExceeded = errors.New("websocket text buffer budget exceeded")
-)
-```
+- It is tied to Gin: `NewManagerWithUpgrade` takes a `*gin.Context`. The module
+  requires `github.com/gin-gonic/gin` v1.12.0 and `github.com/gorilla/websocket`
+  v1.5.3, plus the root `github.com/yusing/goutils` module (all pulled in by
+  `go get`). It does not work with plain `net/http` handlers.
+- Gorilla's package is also named `websocket`. Alias one of them when you import both,
+  for example `gws "github.com/gorilla/websocket"`.
+- Binaries that link this package, including your own test binaries, need
+  `-ldflags=-checklinkname=0`. `DeepEqual` reaches into the runtime through the
+  `github.com/yusing/gointernals` linkname helper, and the Go linker rejects that by
+  default:
 
-## API Reference
+  ```sh
+  go build -ldflags=-checklinkname=0 ./cmd/app
+  go test  -ldflags=-checklinkname=0 ./...
+  ```
 
-### Manager
+  `go vet` and compiling non-`main` packages work without it. See the
+  [`httputils` README](../README.md#required-linker-flag).
+- Go 1.27. JSON helpers use `encoding/json/v2` (through `goutils/strings`), not
+  `encoding/json`; `time.Duration` values are encoded as nanosecond numbers.
 
-#### NewManagerWithUpgrade
-
-```go
-func NewManagerWithUpgrade(c *gin.Context) (*Manager, error)
-```
-
-Upgrades an HTTP connection to a WebSocket connection. Returns a Manager on success.
-
-**Features:**
-
-- Origin validation (allows localhost/127.0.0.1, same origin matching)
-- Per-message deflate compression support
-- Automatic ping-pong keepalive (3s interval, 2s pong timeout)
-- Context cancellation propagation
-
-**Custom Upgrader:**
-To use a custom upgrader, set the "upgrader" context value:
-
-```go
-c.Set("upgrader", customUpgrader)
-manager, err := websocket.NewManagerWithUpgrade(c)
-```
-
-#### Context
-
-```go
-func (m *Manager) Context() context.Context
-```
-
-Returns the context associated with the manager.
-
-#### Close
-
-```go
-func (m *Manager) Close()
-```
-
-Gracefully closes the WebSocket connection with a close frame.
-
-#### Done
-
-```go
-func (m *Manager) Done() <-chan struct{}
-```
-
-Returns a channel that is closed when the context is done or connection is closed.
-
-### Writing Messages
-
-#### WriteData
-
-```go
-func (m *Manager) WriteData(typ int, data []byte, timeout time.Duration) error
-```
-
-Writes a raw message to the connection. Supports TextMessage and BinaryMessage types.
-
-#### WriteJSON
-
-```go
-func (m *Manager) WriteJSON(data any, timeout time.Duration) error
-```
-
-JSON-marshals data and writes it as a TextMessage.
-
-#### CopyJSONStream
-
-```go
-func (m *Manager) CopyJSONStream(r io.Reader) error
-```
-
-Reads sequential JSON values from a byte stream and writes each complete value as a separate
-TextMessage. Input read boundaries do not become WebSocket message boundaries.
-
-#### CopyTextLines
-
-```go
-func (m *Manager) CopyTextLines(r io.Reader) error
-```
-
-Reads newline-delimited text records from a byte stream and writes each line as a separate
-TextMessage. A final record without a newline is sent when the input reaches EOF. Oversized
-records are reconstructed in memory under one shared 64 MiB buffered-payload budget so an
-incomplete record does not block WebSocket heartbeats or grow without bound. Allocator capacity
-may be higher than the retained payload size. The method returns `ErrTextBufferBudgetExceeded`
-when active records exhaust that local budget.
-
-#### NewWriter
-
-```go
-func (m *Manager) NewWriter(msgType int) io.Writer
-```
-
-Creates an io.Writer that sends each `Write` call as a separate WebSocket message. Use
-`CopyJSONStream` instead when the input is a JSON byte stream whose reads or writes may split or
-combine values.
-
-### Reading Messages
-
-#### ReadJSON
-
-```go
-func (m *Manager) ReadJSON(out any, timeout time.Duration) error
-```
-
-Reads a TextMessage, JSON-unmarshals it into the provided struct.
-
-#### ReadBinary
-
-```go
-func (m *Manager) ReadBinary(timeout time.Duration) ([]byte, error)
-```
-
-Reads a binary message and returns the raw bytes.
-
-#### NewReader
-
-```go
-func (m *Manager) NewReader() io.Reader
-```
-
-Creates an io.Reader for streaming messages from the connection.
-
-### Periodic Updates
-
-#### PeriodicWrite
-
-```go
-func (m *Manager) PeriodicWrite(interval time.Duration, getData func() (any, error), deduplicate ...DeduplicateFunc) error
-```
-
-Periodically fetches data and writes it to the connection. Features:
-
-- Initial write before starting the ticker
-- Automatic deduplication (uses DeepEqual by default)
-- Stops when context is done or connection closes
-- Returns first error encountered
-
-### Deduplication
-
-```go
-type DeduplicateFunc func(last, current any) bool
-```
-
-Custom function to compare last and current data. Return true to skip writing.
-
-### Utility Functions
-
-#### PeriodicWrite
-
-```go
-func PeriodicWrite(c *gin.Context, interval time.Duration, get func() (any, error), deduplicate ...DeduplicateFunc)
-```
-
-Convenience function that upgrades and runs PeriodicWrite in one call.
-
-#### DeepEqual
-
-```go
-func DeepEqual(last, current any) bool
-```
-
-Default deduplication function using reflection-based deep equality.
-
-## Usage Examples
-
-### Basic WebSocket Handler
+## Quick start
 
 ```go
 package main
 
 import (
-    "github.com/gin-gonic/gin"
-    "github.com/yusing/goutils/http/websocket"
+	"log"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/yusing/goutils/http/websocket"
 )
 
-func wsHandler(c *gin.Context) {
-    manager, err := websocket.NewManagerWithUpgrade(c)
-    if err != nil {
-        c.Error(err)
-        return
-    }
-    defer manager.Close()
+func main() {
+	gin.SetMode(gin.ReleaseMode) // see "Heartbeat" for why this matters
+	r := gin.New()
 
-    // Read messages
-    for {
-        var data MyStruct
-        err := manager.ReadJSON(&data, 10*time.Second)
-        if err != nil {
-            break
-        }
-        // Process data
-    }
+	r.GET("/ws", func(c *gin.Context) {
+		m, err := websocket.NewManagerWithUpgrade(c)
+		if err != nil {
+			return // the upgrader already wrote the HTTP error response
+		}
+		defer m.Close()
+
+		// Echo every message until the connection ends. The handler must keep
+		// running: returning from it closes the connection.
+		for {
+			select {
+			case <-m.Done():
+				return
+			case data := <-m.ReadCh():
+				if err := m.WriteData(websocket.TextMessage, data, 5*time.Second); err != nil {
+					return
+				}
+			}
+		}
+	})
+
+	log.Fatal(r.Run(":8080"))
 }
 ```
 
-### Server-Sent Events with PeriodicWrite
+To push JSON on a timer, hand the whole handler to `PeriodicWrite`:
 
 ```go
-func statusHandler(c *gin.Context) {
-    websocket.PeriodicWrite(c, 5*time.Second, func() (any, error) {
-        return getStatusUpdate()
-    })
-}
-```
-
-### Custom Deduplication
-
-```go
-manager.PeriodicWrite(interval, getData, func(last, current any) bool {
-    lastUpdate := last.(*StatusUpdate)
-    currentUpdate := current.(*StatusUpdate)
-    return lastUpdate.Version == currentUpdate.Version
+r.GET("/stats", func(c *gin.Context) {
+	websocket.PeriodicWrite(c, time.Second, func() (any, error) {
+		return map[string]int{"clients": 3}, nil
+	})
 })
 ```
 
-### Broadcasting with Reader/Writer
+It upgrades the request, sends the value of `get` immediately and then every
+`interval`, skips a message when it equals the previous one, and returns when the
+connection ends or `get` returns an error. It writes no response of its own: failures
+are recorded with `c.Error` as `apitypes.InternalServerError` values (from
+`goutils/apitypes`) for your Gin error middleware.
+
+## Lifecycle and ownership
+
+- `NewManagerWithUpgrade(c)` hijacks the connection. On failure (not a WebSocket
+  request, bad origin, and so on) gorilla has already written a 4xx response, so just
+  return from the handler.
+- The `Manager` owns the connection. Call `Close()` (usually `defer m.Close()`) when
+  your handler is done; it is idempotent, sends a normal-closure (1000) close frame,
+  closes the socket, and cancels `m.Context()`.
+- The handler must block until the connection is finished. The manager's context is
+  derived from the request context, and returning from the handler cancels it, which
+  closes the WebSocket (a client of a handler that returned right after the upgrade
+  receives a normal-closure close frame). Wait on `m.Done()`, a read loop, or
+  `PeriodicWrite`.
+- The manager also closes itself when the peer closes, a read fails, the heartbeat
+  lapses, a pong cannot be written, or the request context is cancelled.
+  `m.Done()` and `m.Context()` report all of these.
+- Writes (`WriteJSON`, `WriteData`, `NewWriter`, `PeriodicWrite`, the `Copy*` methods)
+  are serialized with a mutex and safe to call from several goroutines. Reads are
+  consumed by one internal goroutine and delivered through a channel; do not read from
+  the underlying connection yourself (it is not exposed).
+
+## Reading
+
+Incoming text and binary messages arrive on a channel with a buffer of one. The
+reader goroutine blocks while that channel is full, so a handler that never reads
+applies backpressure to the peer. The same goroutine answers heartbeat pings, so a
+handler that stops draining the channel also stops getting `pong` replies, and the
+heartbeat check closes the connection about 6 seconds later. Keep reading (or do not
+let the peer send data you do not consume).
+
+- `ReadCh() <-chan []byte` is the raw feed. It is never closed; always select on
+  `m.Done()` as well.
+- `ReadBinary(timeout)` returns the next message or `ErrReadTimeout`.
+- `ReadJSON(&out, timeout)` does the same and decodes it.
+- The text message `ping` is consumed by the heartbeat and never reaches these
+  readers.
+
+After the connection ends, `ReadBinary` and `ReadJSON` return the error that ended
+it. For a clean shutdown (the peer sent a normal close frame, the heartbeat lapsed
+without debug mode, or you called `Close`) no error was recorded, so they return
+`nil` with no data (`ReadBinary` returns a `nil` slice and a `nil` error;
+`ReadJSON` leaves `out` untouched). Check `m.Done()` or `m.Context().Err()` after
+a read instead of trusting a `nil` error:
 
 ```go
-func pipeHandler(c *gin.Context) {
-    manager, _ := websocket.NewManagerWithUpgrade(c)
-
-    reader := manager.NewReader()
-    writer := manager.NewWriter(websocket.TextMessage)
-
-    io.Copy(writer, reader)
+var in struct{ Text string }
+if err := m.ReadJSON(&in, 30*time.Second); err != nil || m.Context().Err() != nil {
+	return
 }
 ```
 
-### Custom Upgrader
+No read size limit is configured, so an untrusted client can send arbitrarily large
+messages. Put a limit in front of the handler if that matters.
+
+## Writing
+
+All writers take a per-call timeout that becomes the write deadline.
+
+- `WriteJSON(v, timeout)` marshals `v` and sends it as a text message.
+- `WriteData(type, data, timeout)` sends a raw message (`websocket.TextMessage` or
+  `websocket.BinaryMessage`).
+- `NewWriter(type)` returns an `io.Writer` that writes one message per `Write` with a
+  10-second deadline.
+- `CopyJSONStream(r)` sends each JSON value read from `r` as its own text message.
+- `CopyTextLines(r)` sends each line as its own text message. The line terminator
+  `\n` is part of the message, and a final line without one is sent as is. Lines
+  longer than the 4 KiB read buffer are accumulated in a pooled buffer; all active
+  streams share a 64 MiB budget, and the copy fails with
+  `ErrTextBufferBudgetExceeded` when it is exhausted.
+- `(*Manager).PeriodicWrite(interval, get, dedupe...)` runs the same loop on an
+  existing manager and returns the error that ended it (`nil` after a clean close).
+
+After the connection has ended, writes return the recorded error, which can be `nil`
+for a clean shutdown (same rule as reads).
+
+A write that times out returns an ordinary `net.Error` whose `Timeout()` is true. The
+exported `ErrWriteTimeout` is not returned in practice, so do not compare against it.
+Treat any write error as fatal: gorilla connections cannot be reused after one.
+
+### Deduplication
+
+`PeriodicWrite` skips a tick when the new value equals the previous one. The first
+value is always sent. By default equality is `websocket.DeepEqual`, a reflective
+comparison of numbers, strings, maps, slices, arrays, and structs (exported fields
+only). Pass a `DeduplicateFunc` to replace it:
 
 ```go
-customUpgrader := &websocket.Upgrader{
-    CheckOrigin: func(r *http.Request) bool {
-        return true // Allow all origins in development
-    },
-    EnableCompression: false,
-}
-
-c.Set("upgrader", customUpgrader)
-manager, err := websocket.NewManagerWithUpgrade(c)
+websocket.PeriodicWrite(c, time.Second, get, func(a, b any) bool {
+	return a.(Snapshot).Version == b.(Snapshot).Version
+})
 ```
 
-## Configuration
+The type is declared `func(last, current any) bool`, but the manager calls it as
+`equals(current, last)`: the first argument is the new value and the second is the
+previous one. Use a symmetric comparison, or treat the parameters in that order. Return
+`true` to skip the write.
 
-### Environment Variables
+## Heartbeat
 
-- `WEBSOCKET_DEBUG`: Enable debug logging for WebSocket connections
-- `DEBUG`: Also enables debug logging (if WEBSOCKET_DEBUG is not set)
+The manager disconnects clients that do not speak its application-level heartbeat.
+This is a text message, not a WebSocket ping frame:
 
-### Compression
+- The client sends a text message whose payload is exactly `ping`.
+- The server replies with a text message `pong` (2-second write deadline) and records
+  the time.
+- Every 3 seconds the server checks the last ping. If it is more than 5 seconds old
+  the connection is closed (close code 1000). A client that never pings is dropped
+  about 6 seconds after the upgrade. Send a ping every 2 to 3 seconds.
 
-Per-message deflate compression is enabled by default with BestSpeed level.
+```js
+const ws = new WebSocket("wss://example.com/ws");
+setInterval(() => ws.readyState === WebSocket.OPEN && ws.send("ping"), 2500);
+ws.onmessage = (e) => { if (e.data !== "pong") console.log(e.data); };
+```
 
-### Timeouts
+Your clients must implement this, and a handler that reads `ReadCh` never sees `ping`
+or needs to answer it. The heartbeat can be switched off only while Gin is in debug
+mode (`gin.Mode() == gin.DebugMode`, Gin's default unless `GIN_MODE=release` or
+`gin.SetMode` is used) by adding `?no-ping=true` (or `1`) to the URL. Set release mode
+in production so clients cannot turn the idle-timeout off.
 
-Default timeouts:
+## Origin check, subprotocols, and compression
 
-- Ping interval: 3 seconds
-- Pong write timeout: 2 seconds
-- No ping received: closes after 5 seconds
-- Close frame timeout: 5 seconds
+The default upgrader accepts a request when:
 
-## Related Packages
+- it has no `Origin` header; or
+- the origin parses with a host and its hostname equals the request `Host` hostname,
+  compared case-insensitively and ignoring ports and scheme; or
+- the request `Host` is `localhost` or `127.0.0.1` (any port), in which case every
+  origin is accepted. `[::1]` is not exempt.
 
-- [httpheaders](../httpheaders/README.md) - WebSocket detection via IsWebsocket
-- [reverseproxy](../reverseproxy/README.md) - WebSocket upgrade handling in reverse proxy
+Anything else gets a 403. The localhost exemption means a server reachable as
+`localhost` accepts cross-site WebSocket requests from any web page the user has
+open, so do not rely on the origin check alone for local services.
+
+If the client offers a subprotocol beginning with `csrf.` (`CSRFSecWebSocketProtocolPrefix`),
+the server selects the first such offer and echoes it in `Sec-WebSocket-Protocol`.
+This lets a browser smuggle a CSRF token through the subprotocol list. The package
+does not validate the token; check it in your own middleware.
+
+`permessage-deflate` compression is enabled at `BestSpeed`.
+
+To change the upgrader, store a `*websocket.Upgrader` from gorilla under the context
+key `"upgrader"` before upgrading. Any other value type panics:
+
+```go
+package main
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	gws "github.com/gorilla/websocket"
+	"github.com/yusing/goutils/http/websocket"
+)
+
+func main() {
+	r := gin.New()
+	r.GET("/ws", func(c *gin.Context) {
+		c.Set("upgrader", &gws.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return r.Header.Get("Origin") == "https://app.example.com"
+			},
+		})
+		m, err := websocket.NewManagerWithUpgrade(c)
+		if err != nil {
+			return
+		}
+		defer m.Close()
+		<-m.Done()
+	})
+	_ = r.Run(":8080")
+}
+```
+
+A custom upgrader replaces the default one completely, including its origin check and
+its `EnableCompression` setting. The manager still asks for write compression at
+`BestSpeed`, which has an effect only when the upgrader negotiated compression.
+
+## Reader adapter
+
+`NewReader()` returns an `io.Reader` that returns one message per `Read`, waiting up
+to 10 seconds. It copies into the caller's buffer without checking its size and
+returns the full message length, so a buffer smaller than the message breaks the
+`io.Reader` contract (callers such as `bufio` panic). Prefer `ReadBinary` or `ReadCh`
+unless the buffer is always large enough.
+
+## Errors and logging
+
+- `ErrReadTimeout` is returned by `ReadBinary` and `ReadJSON`. Values returned for a
+  failed connection wrap the first failure, for example
+  `failed to read message: websocket: close 1006 (abnormal closure): unexpected EOF`.
+- `ErrTextBufferBudgetExceeded` comes from `CopyTextLines`.
+- Logging uses zerolog's global logger (`github.com/rs/zerolog/log`), not
+  `goutils/logging`. A connection that ends with an error other than cancellation
+  is logged once at debug level. Zerolog's default global logger prints JSON to
+  stderr and does not filter debug, so an unconfigured application will show these
+  lines; raise the level with `zerolog.SetGlobalLevel`.
+
+## Environment variables
+
+The settings are defined by `goutils/env/godoxy` and read once, when the package is
+initialized. Each name is looked up with the prefixes `GODOXY_`, `GOPROXY_`, and then
+none (for example `GODOXY_WEBSOCKET_DEBUG`, then `WEBSOCKET_DEBUG`):
+
+- `WEBSOCKET_DEBUG` (default `false`). When true, ping lapses and close frames other
+  than normal closure and going-away are recorded as errors, so reads and writes return
+  them and `PeriodicWrite` reports them instead of ending silently. An explicit
+  `DEBUG=true` enables it too. The `DEBUG` default that is derived for Go test binaries
+  does not, so tests see the quiet behavior unless you set the variable.
+
+A value that is not a Go boolean (for example `DEBUG=app:*`) makes the process panic at
+startup with `env DEBUG: invalid bool value`. Applications that already use `DEBUG`
+with other meanings must avoid collisions.
+
+## Related packages
+
+- [reverseproxy](../reverseproxy/README.md) proxies WebSocket upgrades to upstream
+  servers.
+- [httpheaders](../httpheaders/README.md) provides `IsWebsocket` for detecting the
+  handshake.

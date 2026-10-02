@@ -1,65 +1,112 @@
 # goutils/version
 
-Version utilities for semantic versioning with parsing and comparison.
+A small `Version` type for `v<generation>.<major>.<minor>` release tags, with parsing,
+comparison, text and JSON encoding, and access to the version stamped into your binary
+at build time.
 
-## Overview
+## Install
 
-The `version` package provides a `Version` type for semantic versioning (generation.major.minor) with parsing and comparison.
+```sh
+go get github.com/yusing/goutils@v0.8.0
+```
 
-## API Reference
+```go
+import "github.com/yusing/goutils/version"
+```
+
+The package name is `version`. It uses only the standard library and needs Go 1.27 or
+newer.
+
+## Quick start
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/yusing/goutils/version"
+)
+
+func main() {
+	current := version.Parse("v1.2.3")
+	latest := version.Parse("v1.2.4-beta")
+
+	fmt.Println(latest, latest.IsNewerThan(current), latest.IsNewerThanMajor(current))
+	fmt.Println(version.Parse("1.2.3"), version.Parse("v1.2.3-rc.1"))
+
+	data, _ := json.Marshal(struct{ V version.Version }{current})
+	fmt.Println(string(data))
+
+	fmt.Println(version.Get())
+}
+```
+
+Output:
+
+```text
+v1.2.4 true false
+v0.0.0 v0.0.0
+{"V":"v1.2.3"}
+v0.0.0
+```
+
+## The type
 
 ```go
 type Version struct{ Generation, Major, Minor int }
-
-func New(gen, major, minor int) Version
-func Get() Version
-func Parse(v string) Version
 ```
 
-### Comparison Methods
+`v1.2.3` is generation 1, major 2, minor 3. Create one with `New(gen, major, minor)` or
+`Parse`. `Version` is comparable with `==`, and `String()` always returns
+`v<generation>.<major>.<minor>`.
 
-```go
-func (v Version) IsNewerThan(other Version) bool
-func (v Version) IsNewerThanMajor(other Version) bool
-func (v Version) IsOlderThan(other Version) bool
-func (v Version) IsOlderThanMajor(other Version) bool
-func (v Version) IsOlderMajorThan(other Version) bool
-func (v Version) IsEqual(other Version) bool
+## Parsing
+
+`Parse(s)` never returns an error. It accepts only `v<digits>.<digits>.<digits>`, with an
+optional suffix of a hyphen and word characters. Any such suffix is dropped:
+`v3.1.0-beta` parses as `v3.1.0`. Everything else yields the zero `Version`
+(`v0.0.0`) with no indication that parsing failed:
+
+- no leading `v` (`1.2.3`)
+- fewer or more than three numbers (`v1.2`, `v1.2.3.4`)
+- a suffix with a dot or a second hyphen (`v1.2.3-rc.1`, `v1.2.3-beta-1`)
+- numbers too large for an `int`, empty input, or branch names such as `feat/x`
+
+`v0.0.0` is also a valid result for the input `v0.0.0`, so the two cannot be told apart.
+Validate input yourself when that matters.
+
+## Build version
+
+`Get()` returns the version stamped into the binary, parsed once at program start. The
+value comes from an unexported string that you set with the linker:
+
+```sh
+go build -ldflags "-X github.com/yusing/goutils/version.version=v1.2.3" ./cmd/app
 ```
 
-### String Methods
+Without the flag it is `unset`, so `Get()` returns `v0.0.0`. A value that does not match
+the format above, such as a branch name, also gives `v0.0.0`.
 
-```go
-func (v Version) String() string
-func (v Version) MarshalText() ([]byte, error)
-func (v *Version) UnmarshalText(text []byte) error
-```
+## Comparing
 
-## Usage
+| Method | True when |
+| --- | --- |
+| `IsEqual(o)` | all three numbers are equal |
+| `IsNewerThan(o)` | newer by generation, then major, then minor |
+| `IsNewerThanMajor(o)` | newer by generation or major; minor is ignored |
+| `IsOlderThanMajor(o)` | older by generation or major; minor is ignored |
+| `IsOlderThan(o)` | **not** newer than `o`, so also true for equal versions |
+| `IsOlderMajorThan(o)` | **not** newer by generation or major, so also true when those are equal |
 
-```go
-// Parse version string
-v := version.Parse("v1.2.3")
-fmt.Println(v) // "v1.2.3"
+`IsOlderThan` and `IsOlderMajorThan` are the negations of the `IsNewer*` methods, not
+strict comparisons: comparing a version with an equal one, `IsOlderThan` is `true` while
+`IsOlderThanMajor` is `false`. For a strict "older" test on all three numbers, use
+`o.IsNewerThan(v)`.
 
-// Create version
-v := version.New(1, 2, 3)
+## Text and JSON
 
-// Comparison
-v1 := version.Parse("v1.2.3")
-v2 := version.Parse("v1.2.4")
-v1.IsNewerThan(v2)       // false
-v2.IsNewerThan(v1)       // true
-v2.IsNewerThanMajor(v1)  // false (same generation)
-
-// JSON serialization
-data, _ := json.Marshal(v) // "\"v1.2.3\""
-var v2 version.Version
-json.Unmarshal(data, &v2)
-```
-
-## Format
-
-Versions follow the format: `v<generation>.<major>.<minor>`
-
-Examples: `v1.0.0`, `v2.3.15`, `v3.1.0-beta`
+`Version` implements `encoding.TextMarshaler` and `TextUnmarshaler`, so JSON and other text
+encodings write it as a string such as `"v1.2.3"`. `UnmarshalText` uses `Parse`: invalid
+text produces `v0.0.0` and no error.
