@@ -9,7 +9,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/rs/zerolog v1.35.1
 	github.com/yusing/gointernals v0.2.1
-	github.com/yusing/goutils v0.9.0
+	github.com/yusing/goutils v0.9.1
 )
 
 require (
