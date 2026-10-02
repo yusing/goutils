@@ -50,7 +50,7 @@ var (
 
 // GetTestTask returns the existing or a new Task for testing.
 //
-// It should be uses as a parent task for other tasks.
+// It can be finished directly or used as a parent for subtasks.
 func GetTestTask(tb testing.TB) *Task {
 	testTasksMu.Lock()
 	defer testTasksMu.Unlock()
@@ -78,7 +78,8 @@ func GetTestTask(tb testing.TB) *Task {
 	return task
 }
 
-// RootTask returns a new Task with the given name, derived from the root context.
+// RootTask returns a new Task attached to the hidden process-wide root.
+// WaitExit cancels that root and waits for its tasks during program shutdown.
 //
 //go:inline
 func RootTask(name string, needFinish bool) *Task {

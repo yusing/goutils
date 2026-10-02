@@ -111,10 +111,10 @@ func (t *Task) GetValue(key any) any {
 }
 
 // isRoot reports whether the task is a root task, which is its own parent.
-// Comparing against the root variable alone is not enough: tests replace it, and
-// a task whose parent is a superseded root must still terminate the walk.
+// Identity does not depend on the global root variable: tests replace it while
+// callbacks on a superseded root may still be finishing.
 func (t *Task) isRoot() bool {
-	return t == root || t.parent == t
+	return t.parent == t
 }
 
 // String returns the full name of the task.
@@ -143,7 +143,9 @@ func (t *Task) FinishAndWait(reason any) {
 	t.finish(reason, true)
 }
 
-// OnFinished calls fn when the task is canceled and all subtasks are finished.
+// OnFinished calls fn after this task's Finish has been called.
+// It does not wait for subtasks to finish. For tasks that do not require Finish,
+// it behaves like OnCancel.
 //
 // It should not be called after Finish is called.
 func (t *Task) OnFinished(about string, fn func()) {
@@ -178,7 +180,7 @@ func (t *Task) addCallback(about string, fn func(), wait bool) {
 				}
 			}
 
-			// Wait for all subtasks to finish, then execute waiting callbacks
+			// Wait for this task's Finish, then execute waiting callbacks
 			<-t.done
 			for cb := range t.callbacks.Range {
 				if cb.wait { // Execute waiting callbacks (OnFinished)
@@ -286,7 +288,12 @@ func (t *Task) detachFromParent(waitErr error) {
 	if waitErr != nil && shutdownDeadline.Load() != 0 {
 		return
 	}
-	t.parent.children.Delete(t)
+	t.parent.mu.Lock()
+	children := t.parent.children
+	t.parent.mu.Unlock()
+	if children != nil {
+		children.Delete(t)
+	}
 }
 
 // hasPending reports whether the task still owns unfinished callbacks or children.

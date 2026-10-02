@@ -291,9 +291,9 @@ history, and `events.SetCtx` accepts a `*task.Task`.
 
 Use `GetTestTask` as the parent of the code under test. It returns a task whose
 context ends with the test, cached per `testing.TB`, and not attached to the
-process-wide root. Do not call `Finish` on that task itself: it needs no
-cleanup, and it is not part of the shutdown tree. Create a subtask under it when
-the test needs a scope to cancel.
+process-wide root. You may call `Finish` or `FinishAndWait` on the test task
+to cancel the code under test. Create a subtask when only one scope should stop
+while other code in the same test keeps running.
 
 ```go
 package worker_test
