@@ -12,8 +12,11 @@ type serverError struct {
 
 // Error returns a generic error response
 func Error(message string, err ...error) ErrorResponse {
-	if len(err) > 0 {
-		if plain, ok := err[0].(interface{ Plain() []byte }); ok {
+	for _, cause := range err {
+		if cause == nil {
+			continue
+		}
+		if plain, ok := cause.(interface{ Plain() []byte }); ok {
 			return ErrorResponse{
 				Message: message,
 				Error:   string(plain.Plain()),
@@ -21,7 +24,7 @@ func Error(message string, err ...error) ErrorResponse {
 		}
 		return ErrorResponse{
 			Message: message,
-			Error:   err[0].Error(),
+			Error:   cause.Error(),
 		}
 	}
 	return ErrorResponse{

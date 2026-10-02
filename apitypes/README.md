@@ -61,10 +61,10 @@ Output:
 | `ErrorResponse` | `{"message": "...", "error": "..."}`; `error` is omitted when empty | `Error(message, err...)` |
 | `SuccessResponse` | `{"message": "...", "details": {...}}`; `details` is omitted when empty | `Success(message, extra...)` |
 
-- `Error(message, err...)` uses only the first error. If it has a `Plain() []byte` method,
+- `Error(message, err...)` skips nil errors and uses the first non-nil error. If it has a `Plain() []byte` method,
   such as an [`errs`](../errs/README.md) error, the plain text is used, so the response
   contains no ANSI color codes or Markdown; otherwise it uses `err.Error()`.
-  **Passing a `nil` error panics.** Check `err != nil` first or omit the argument.
+  When no non-nil error is supplied, the response contains only the message.
 - `Success(message, extra...)` uses only the first map as `details`.
 - Neither builder sets an HTTP status; you pass the status to your framework, for example
   `c.JSON(http.StatusBadRequest, apitypes.Error("invalid request", err))`.
