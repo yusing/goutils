@@ -82,8 +82,8 @@ start a protocol.
 - `Server` has no `Close` or `Shutdown` method; stopping is done through the task.
   `Uptime()` is the time since `Start` began.
 - If `Start` fails partway (for example, HTTP is up but the HTTPS port is busy), it
-  returns the error but the servers that did start keep running until the parent task is
-  cancelled. Cancel the parent on error if that is not what you want.
+  stops and waits for the servers started by that call before returning the error.
+  The caller-owned parent task remains usable.
 - If both `HTTPAddr` and `HTTPSAddr` are empty, `Start` does nothing and returns `nil`.
 
 ## Options
@@ -112,13 +112,12 @@ type Options struct {
   its address is empty, even if you supplied a listener for it, and that listener is
   then never served. When you provide `HTTPListener` or `HTTPSListener`, the address
   value is not used for binding, so any non-empty placeholder works. The listener's
-  `Addr()` must return a `*net.TCPAddr`; the port is taken from it with a type assertion
-  that panics for other types, such as Unix sockets.
-- `HTTPS` exists only when `HTTPSAddr` is set **and** `CertProvider.GetCert(nil)` succeeds.
-  `NewServer` calls `GetCert` once with a `nil` `*tls.ClientHelloInfo` to probe the
-  provider, so the implementation must tolerate `nil` and return a default
-  certificate. If the probe fails the HTTPS server is skipped silently, with no error and
-  no log line, and HTTP/3 is skipped with it.
+  `Addr()` must return a `*net.TCPAddr`; other address types, such as Unix sockets,
+  are rejected with an error.
+- When `HTTPSAddr` is set, `CertProvider` must be present and return a non-nil
+  certificate from `GetCert(nil)`. The provider must tolerate a nil hello. Missing
+  providers, nil certificates, and provider errors are returned by `Start` before
+  any listener starts; HTTPS is never silently skipped.
 - `TLSConfigMutator` receives the TLS configuration (`MinVersion` TLS 1.2, `h2` and
   `http/1.1` ALPN, `GetCertificate` from the provider) and returns the one to use. It
   must not return `nil`.
@@ -185,7 +184,7 @@ HTTP/3 is on when the HTTPS server exists and HTTP/3 is requested: `HTTP3_ENABLE
 - If the UDP port cannot be bound, `Start` returns `failed to start HTTP/3 server` and
   neither TCP server is started.
 - It is not started when a PROXY protocol policy is enabled; a warning is logged
-  instead (and see the limitation below).
+  instead.
 
 ## PROXY protocol
 
@@ -213,10 +212,7 @@ true` selects the deprecated `NewLegacyProxyProtocolPolicy()`, which accepts an 
 header from any peer, so any client can claim an arbitrary source address. An explicit
 `ProxyProtocolPolicy` (even `disabled`) takes precedence over the legacy flag.
 
-Known limitation: starting the HTTPS server with an enabled policy currently panics with
-`http: HTTP/2 Server already registered` (`HTTP3_ENABLED` does not matter). Use PROXY
-protocol with the plain HTTP server only, or terminate TLS and PROXY protocol outside this
-package.
+HTTPS supports enabled PROXY policies; HTTP/3 remains unavailable with PROXY protocol.
 
 ## Lower-level API
 
@@ -240,8 +236,8 @@ port, err := server.Start(root.Subtask("http", true), srv)
   `nil` error.
 - Options: `WithListener`, `WithACL`, `WithTCPWrappers`, `WithUDPWrappers`,
   `WithLogger`, `WithProxyProtocolPolicy`, and the deprecated `WithProxyProtocolSupport`.
-  `WithTCPWrappers` and `WithUDPWrappers` replace the wrappers set by earlier options,
-  `WithACL` included, so pass them before `WithACL`.
+  `WithTCPWrappers`, `WithUDPWrappers`, and `WithACL` append wrappers in option order;
+  adding custom wrappers does not discard ACL enforcement.
 
 ## Logging and environment
 
@@ -249,15 +245,15 @@ port, err := server.Start(root.Subtask("http", true), srv)
   holding `Options.Name`, not to `goutils/logging`. Start and stop are logged at info
   level; serve and shutdown failures at error level. Zerolog's default global logger
   writes JSON to stderr, so unconfigured applications see these lines.
-- `HTTP3_ENABLED` and `SERVER_DEBUG` are defined by `goutils/env/godoxy` and read once
+- `HTTP3_ENABLED`, `SERVER_DEBUG`, and `DEBUG` are read through `goutils/env` once
   when the package is initialized. Each name is looked up with the prefixes `GODOXY_`,
   `GOPROXY_`, and then none (for example `GODOXY_HTTP3_ENABLED`, then `HTTP3_ENABLED`),
-  and both default to `false`.
+  and all default to `false`.
   - `HTTP3_ENABLED` is the HTTP/3 switch for `StartServer`; it does not affect
     `(*Server).Start`, which takes the switch as an argument.
   - `SERVER_DEBUG` routes the `net/http` error log and the HTTP/3 logger to zerolog. An
-    explicit `DEBUG=true` enables it too; the `DEBUG` default derived for Go test
-    binaries does not.
+    `DEBUG=true` enables it too (`SERVER_DEBUG || DEBUG`); test binaries have no
+    special derived default.
   - A value that is not a Go boolean (for example `DEBUG=app:*`) panics at startup.
 
 ## Related packages

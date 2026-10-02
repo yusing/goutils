@@ -40,6 +40,7 @@ type Server struct {
 	startTime           time.Time
 	acl                 ACL
 	proxyProtocolPolicy ProxyProtocolPolicy
+	initErr             error
 
 	l zerolog.Logger
 }
@@ -87,10 +88,15 @@ func NewServer(opt Options) (s *Server) {
 
 	logger := log.With().Str("server", opt.Name).Logger()
 
-	certAvailable := false
-	if opt.CertProvider != nil {
-		_, err := opt.CertProvider.GetCert(nil)
-		certAvailable = err == nil
+	var initErr error
+	if opt.HTTPSAddr != "" {
+		if opt.CertProvider == nil {
+			initErr = errors.New("HTTPS requested without a certificate provider")
+		} else if cert, err := opt.CertProvider.GetCert(nil); err != nil {
+			initErr = fmt.Errorf("failed to load HTTPS certificate: %w", err)
+		} else if cert == nil {
+			initErr = errors.New("HTTPS certificate provider returned no certificate")
+		}
 	}
 
 	if opt.HTTPAddr != "" {
@@ -99,7 +105,7 @@ func NewServer(opt Options) (s *Server) {
 			Handler: h2c.NewHandler(opt.Handler, &http2.Server{}),
 		}
 	}
-	if certAvailable && opt.HTTPSAddr != "" {
+	if initErr == nil && opt.HTTPSAddr != "" {
 		tlsConfig := &tls.Config{
 			GetCertificate: opt.CertProvider.GetCert,
 			MinVersion:     tls.VersionTLS12,
@@ -114,7 +120,7 @@ func NewServer(opt Options) (s *Server) {
 			TLSConfig: tlsConfig,
 		}
 		if err := http2.ConfigureServer(httpsSer, &http2.Server{}); err != nil {
-			logger.Error().Err(err).Msg("failed to configure HTTP/2 for HTTPS server")
+			initErr = fmt.Errorf("failed to configure HTTP/2 for HTTPS server: %w", err)
 		}
 	}
 	return &Server{
@@ -127,6 +133,7 @@ func NewServer(opt Options) (s *Server) {
 		l:                   logger,
 		acl:                 opt.ACL,
 		proxyProtocolPolicy: resolveProxyProtocolPolicy(opt.ProxyProtocolPolicy, opt.SupportProxyProtocol),
+		initErr:             initErr,
 	}
 }
 
@@ -137,7 +144,21 @@ func NewServer(opt Options) (s *Server) {
 // Start() is non-blocking if no error is returned.
 //
 // If an error occurs, it will wait for started servers to finish and return the error.
-func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
+func (s *Server) Start(parent task.Parent, http3Enabled bool) (startErr error) {
+	if s.initErr != nil {
+		return s.initErr
+	}
+	var started []*task.Task
+	defer func() {
+		if startErr != nil {
+			for _, subtask := range started {
+				subtask.Finish(startErr)
+			}
+			for _, subtask := range started {
+				subtask.FinishAndWait(startErr)
+			}
+		}
+	}()
 	taskName := func(proto string) string {
 		return s.Name + "." + proto
 	}
@@ -155,6 +176,7 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 				TLSConfig: http3.ConfigureTLSConfig(s.https.TLSConfig),
 			}
 			subtask := parent.Subtask(taskName("http3"), true)
+			started = append(started, subtask)
 			_, err := Start(subtask, h3, WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
 			if err != nil {
 				subtask.Finish(err)
@@ -172,6 +194,7 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 	// Serve goroutine never Finishes and pins parent shutdown.
 	if s.http != nil {
 		subtask := parent.Subtask(taskName("http"), true)
+		started = append(started, subtask)
 		_, err := Start(subtask, s.http, WithListener(s.httpListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
 		if err != nil {
 			subtask.Finish(err)
@@ -181,6 +204,7 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) error {
 
 	if s.https != nil {
 		subtask := parent.Subtask(taskName("https"), true)
+		started = append(started, subtask)
 		_, err := Start(subtask, s.https, WithListener(s.httpsListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
 		if err != nil {
 			subtask.Finish(err)
@@ -203,13 +227,13 @@ type ServerStartOption func(opts *ServerStartOptions)
 
 func WithTCPWrappers(wrappers ...TCPWrapper) ServerStartOption {
 	return func(opts *ServerStartOptions) {
-		opts.tcpWrappers = wrappers
+		opts.tcpWrappers = append(opts.tcpWrappers, wrappers...)
 	}
 }
 
 func WithUDPWrappers(wrappers ...UDPWrapper) ServerStartOption {
 	return func(opts *ServerStartOptions) {
-		opts.udpWrappers = wrappers
+		opts.udpWrappers = append(opts.udpWrappers, wrappers...)
 	}
 }
 
@@ -284,7 +308,14 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 				return port, err
 			}
 		}
-		port = l.Addr().(*net.TCPAddr).Port
+		tcpAddr, ok := l.Addr().(*net.TCPAddr)
+		if !ok {
+			if opts.listener == nil {
+				_ = l.Close()
+			}
+			return 0, fmt.Errorf("expected TCP listener address, got %T", l.Addr())
+		}
+		port = tcpAddr.Port
 		if proxyProtocolEnabled {
 			l = proxyProtocolPolicy.Wrap(l)
 		}
@@ -294,7 +325,10 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 		for _, wrapper := range opts.tcpWrappers {
 			l = wrapper(l)
 		}
-		if proxyProtocolEnabled {
+		// TLS connections negotiate HTTP/2 directly; net/http already owns their
+		// configured HTTP/2 server. The helper is only needed for cleartext PROXY
+		// ALPN TLVs and would configure TLS HTTP/2 a second time.
+		if proxyProtocolEnabled && srv.TLSConfig == nil {
 			serveFunc = getServeFunc(l, h2proxy.NewServer(srv, nil).Serve)
 		} else {
 			serveFunc = getServeFunc(l, srv.Serve)
@@ -317,7 +351,12 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 		if err != nil {
 			return port, err
 		}
-		port = l.LocalAddr().(*net.UDPAddr).Port
+		udpAddr, ok := l.LocalAddr().(*net.UDPAddr)
+		if !ok {
+			_ = l.Close()
+			return 0, fmt.Errorf("expected UDP listener address, got %T", l.LocalAddr())
+		}
+		port = udpAddr.Port
 		for _, wrapper := range opts.udpWrappers {
 			l = wrapper(l)
 		}
