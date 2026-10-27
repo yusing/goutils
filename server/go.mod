@@ -9,8 +9,8 @@ require (
 	github.com/quic-go/quic-go v0.64.1
 	github.com/rs/zerolog v1.35.1
 	github.com/samber/slog-zerolog/v2 v2.9.2
-	github.com/yusing/goutils v0.9.3
-	github.com/yusing/goutils/http v0.9.3
+	github.com/yusing/goutils v0.9.4
+	github.com/yusing/goutils/http v0.9.4
 	golang.org/x/net v0.61.0
 )
 

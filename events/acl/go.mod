@@ -5,7 +5,7 @@ go 1.27
 replace github.com/yusing/goutils => ../..
 
 require (
-	github.com/yusing/goutils v0.9.3
+	github.com/yusing/goutils v0.9.4
 	golang.org/x/sync v0.24.0
 )
 
