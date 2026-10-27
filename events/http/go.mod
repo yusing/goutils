@@ -6,7 +6,7 @@ replace github.com/yusing/goutils => ../..
 
 require (
 	github.com/yusing/goutils v0.9.3
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 )
 
-require golang.org/x/text v0.42.0 // indirect
+require golang.org/x/text v0.43.0 // indirect
