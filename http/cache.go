@@ -19,6 +19,11 @@ type (
 		Username string
 		Password []byte
 	}
+
+	cachedRemoteIP struct {
+		remoteAddr string
+		ip         net.IP
+	}
 )
 
 const (
@@ -115,17 +120,18 @@ func (c Cache) UpdateCookies(r *http.Request, update UpdateFunc[[]*http.Cookie])
 
 // GetRemoteIP returns the remote ip address.
 // If r.RemoteAddr is not a valid ip address, nil is returned.
+// A changed RemoteAddr replaces the cached address.
 func (c Cache) GetRemoteIP(r *http.Request) net.IP {
-	v, ok := c[cacheKeyRemoteIP]
-	if !ok {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		v = net.ParseIP(host)
-		c[cacheKeyRemoteIP] = v
+	if cached, ok := c[cacheKeyRemoteIP].(cachedRemoteIP); ok && cached.remoteAddr == r.RemoteAddr {
+		return cached.ip
 	}
-	return v.(net.IP)
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	c[cacheKeyRemoteIP] = cachedRemoteIP{remoteAddr: r.RemoteAddr, ip: ip}
+	return ip
 }
 
 // GetBasicAuth returns *Credentials the basic auth username and password.

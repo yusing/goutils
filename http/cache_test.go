@@ -1,12 +1,40 @@
 package httputils
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"testing"
 
 	expect "github.com/yusing/goutils/testing"
 )
+
+func TestCacheRemoteIPTracksAddressChanges(t *testing.T) {
+	req := &http.Request{RemoteAddr: "127.0.0.1:1234"}
+	cache := NewCache()
+	defer cache.Release()
+
+	first := cache.GetRemoteIP(req)
+	expect.Equal(t, first.String(), "127.0.0.1")
+	if &first[0] != &cache.GetRemoteIP(req)[0] {
+		t.Fatal("unchanged RemoteAddr was reparsed")
+	}
+
+	for _, tc := range []struct{ remote, ip string }{
+		{"203.0.113.42:1234", "203.0.113.42"},
+		{"[2001:db8::42]:1234", "2001:db8::42"},
+		{"2001:db8::43", "2001:db8::43"},
+		{"invalid", ""},
+		{"198.51.100.7", "198.51.100.7"},
+	} {
+		req.RemoteAddr = tc.remote
+		for range 2 {
+			if got := cache.GetRemoteIP(req); !got.Equal(net.ParseIP(tc.ip)) {
+				t.Fatalf("GetRemoteIP(%q) = %v, want %q", tc.remote, got, tc.ip)
+			}
+		}
+	}
+}
 
 func TestCacheUpdateCookiesUpdatesCookiesMap(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
