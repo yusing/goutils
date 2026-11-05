@@ -40,6 +40,7 @@ type Server struct {
 	startTime           time.Time
 	acl                 ACL
 	proxyProtocolPolicy ProxyProtocolPolicy
+	drainTimeout        time.Duration
 	initErr             error
 
 	l zerolog.Logger
@@ -60,6 +61,10 @@ type Options struct {
 	// Deprecated: configure ProxyProtocolPolicy instead.
 	SupportProxyProtocol bool
 	ProxyProtocolPolicy  ProxyProtocolPolicy
+
+	// DrainTimeout is how long in-flight HTTP/1.1 and HTTP/2 requests may run
+	// after the server task is cancelled. Default: 1 second. See WithDrainTimeout.
+	DrainTimeout time.Duration
 }
 
 type (
@@ -133,6 +138,7 @@ func NewServer(opt Options) (s *Server) {
 		l:                   logger,
 		acl:                 opt.ACL,
 		proxyProtocolPolicy: resolveProxyProtocolPolicy(opt.ProxyProtocolPolicy, opt.SupportProxyProtocol),
+		drainTimeout:        opt.DrainTimeout,
 		initErr:             initErr,
 	}
 }
@@ -195,7 +201,7 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) (startErr error) {
 	if s.http != nil {
 		subtask := parent.Subtask(taskName("http"), true)
 		started = append(started, subtask)
-		_, err := Start(subtask, s.http, WithListener(s.httpListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
+		_, err := Start(subtask, s.http, WithListener(s.httpListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l), WithDrainTimeout(s.drainTimeout))
 		if err != nil {
 			subtask.Finish(err)
 			return fmt.Errorf("failed to start HTTP server: %w", err)
@@ -205,7 +211,7 @@ func (s *Server) Start(parent task.Parent, http3Enabled bool) (startErr error) {
 	if s.https != nil {
 		subtask := parent.Subtask(taskName("https"), true)
 		started = append(started, subtask)
-		_, err := Start(subtask, s.https, WithListener(s.httpsListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l))
+		_, err := Start(subtask, s.https, WithListener(s.httpsListener), WithProxyProtocolPolicy(s.proxyProtocolPolicy), WithACL(s.acl), WithLogger(&s.l), WithDrainTimeout(s.drainTimeout))
 		if err != nil {
 			subtask.Finish(err)
 			return fmt.Errorf("failed to start HTTPS server: %w", err)
@@ -221,9 +227,19 @@ type ServerStartOptions struct {
 	proxyProto          bool
 	proxyProtocolPolicy ProxyProtocolPolicy
 	listener            net.Listener
+	drainTimeout        time.Duration
 }
 
 type ServerStartOption func(opts *ServerStartOptions)
+
+// WithDrainTimeout sets how long in-flight requests may run after the server
+// task is cancelled before they are cancelled too. Default: 1 second.
+// Applies to HTTP/1.1 and HTTP/2; HTTP/3 servers stop as before.
+func WithDrainTimeout(timeout time.Duration) ServerStartOption {
+	return func(opts *ServerStartOptions) {
+		opts.drainTimeout = timeout
+	}
+}
 
 func WithTCPWrappers(wrappers ...TCPWrapper) ServerStartOption {
 	return func(opts *ServerStartOptions) {
@@ -298,9 +314,20 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 
 	switch srv := any(srv).(type) {
 	case *http.Server:
-		srv.BaseContext = func(l net.Listener) context.Context {
-			return task.Context()
+		// Request contexts must not end the moment the task is cancelled (e.g.
+		// on a config reload): stopHTTP drains them first and cancels this
+		// context, with the task's cause, when the drain window ends.
+		// Set before any Serve goroutine (h2proxy starts one) reads srv.
+		baseCtx, cancelBase := context.WithCancelCause(context.WithoutCancel(task.Context()))
+		srv.BaseContext = func(net.Listener) context.Context {
+			return baseCtx
 		}
+		stopRegistered := false
+		defer func() {
+			if !stopRegistered {
+				cancelBase(errors.New("server not started"))
+			}
+		}()
 		l := opts.listener
 		if l == nil {
 			l, err = lc.Listen(task.Context(), "tcp", srv.Addr)
@@ -334,8 +361,9 @@ func Start[Server httpServer](task *task.Task, srv Server, optFns ...ServerStart
 			serveFunc = getServeFunc(l, srv.Serve)
 		}
 		task.OnCancel("stop", func() {
-			stop(srv, l, proto, opts.logger)
+			stopHTTP(srv, l, proto, opts.logger, opts.drainTimeout, cancelBase, context.Cause(task.Context()))
 		})
+		stopRegistered = true
 	case *http3.Server:
 		srv.ConnContext = func(ctx context.Context, c *quic.Conn) context.Context {
 			subtask := task.Subtask("conn", true)
@@ -384,6 +412,63 @@ func resolveProxyProtocolPolicy(policy ProxyProtocolPolicy, legacy bool) ProxyPr
 		return NewLegacyProxyProtocolPolicy()
 	}
 	return policy
+}
+
+// defaultDrainTimeout is how long in-flight requests may run after a stop.
+const defaultDrainTimeout = time.Second
+
+// stopHTTP stops an HTTP/1.1 / HTTP/2 server without cutting in-flight
+// requests at once:
+//
+//  1. The listener is closed first, so the port is free for a replacement
+//     server (config reload) right away.
+//  2. Shutdown waits up to drain for active requests to finish.
+//  3. Request contexts, including hijacked connections such as WebSockets
+//     that Shutdown does not track, are cancelled with cause when the window
+//     ends; connections still open are closed.
+//
+// On a reload this runs in the background, so stopping the task does not
+// wait for the drain. On program exit it runs synchronously so responses are
+// flushed before the process ends, and it does not wait out the window once
+// Shutdown is done.
+func stopHTTP(srv *http.Server, l io.Closer, proto string, logger *zerolog.Logger, drain time.Duration, cancelBase context.CancelCauseFunc, cause error) {
+	if drain <= 0 {
+		drain = defaultDrainTimeout
+	}
+	if err := convertError(l.Close()); err != nil {
+		logger.Err(err).Msg("failed to close " + proto + " listener")
+	}
+
+	exiting := false
+	select {
+	case <-task.RootContextCanceled():
+		exiting = true
+	default:
+	}
+
+	drainAndStop := func() {
+		// This runs after the task is cancelled; strip that cancellation so
+		// Shutdown actually waits.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(task.RootContext()), drain)
+		defer cancel()
+
+		err := convertError(srv.Shutdown(ctx))
+		if !exiting {
+			<-ctx.Done() // give hijacked connections the rest of the window
+		}
+		cancelBase(cause)
+		if err != nil {
+			_ = srv.Close()
+			logger.Info().Str("proto", proto).Str("addr", addr(srv)).Dur("drain", drain).Msg("server stopped, requests still running after the drain window were cancelled")
+			return
+		}
+		logger.Info().Str("proto", proto).Str("addr", addr(srv)).Msg("server stopped")
+	}
+	if exiting {
+		drainAndStop()
+	} else {
+		go drainAndStop()
+	}
 }
 
 func stop[Server httpServer](srv Server, l io.Closer, proto string, logger *zerolog.Logger) {

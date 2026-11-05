@@ -72,13 +72,22 @@ start a protocol.
 - Each protocol runs under its own subtask of the task you pass in, named
   `<Name>.http`, `<Name>.https`, and `<Name>.http3`. Cancelling or finishing the parent
   stops them. Typical shutdown is `root.FinishAndWait(reason)` or `task.WaitExit(n)`.
-- On cancellation the listener is closed first, then `Shutdown` waits up to one second
-  for in-flight requests. The wait uses a fresh deadline that ignores the already
-  cancelled parent, so responses that finish within a second are flushed.
-- Every request context derives from the server's task, so handlers see
-  `r.Context().Done()` as soon as shutdown starts, even while `Shutdown` is still
-  waiting for them. Do not overwrite `http.Server.BaseContext` on a server you pass to
-  `Start`. Hijacked connections (WebSocket, for example) are not waited for.
+- On cancellation the HTTP/1.1 and HTTP/2 servers drain (`DrainTimeout`, default one
+  second):
+  1. The listener is closed first, so the port is free at once for a replacement
+     server, e.g. after a config reload.
+  2. `Shutdown` waits up to `DrainTimeout` for in-flight requests, with a fresh
+     deadline that ignores the already cancelled parent.
+  3. When the window ends, request contexts are cancelled with the task's cause
+     (`context.Cause(r.Context())`), including hijacked connections such as
+     WebSockets, and connections still open are closed.
+- Request contexts derive from the server's task values but not from its
+  cancellation, so handlers keep running during the drain window. Do not overwrite
+  `http.Server.BaseContext` on a server you pass to `Start`.
+- When the root task is not cancelled (a single server or runtime being replaced), the
+  drain runs in the background: cancelling the task does not wait for it. On program
+  exit (root cancelled) it runs synchronously and returns once `Shutdown` is done.
+- HTTP/3 servers stop as before: request contexts end when the task is cancelled.
 - `Server` has no `Close` or `Shutdown` method; stopping is done through the task.
   `Uptime()` is the time since `Start` began.
 - If `Start` fails partway (for example, HTTP is up but the HTTPS port is busy), it
@@ -102,6 +111,8 @@ type Options struct {
 
 	SupportProxyProtocol bool // Deprecated: use ProxyProtocolPolicy.
 	ProxyProtocolPolicy  ProxyProtocolPolicy
+
+	DrainTimeout time.Duration // default 1s, see Lifecycle and ownership
 }
 ```
 
@@ -235,7 +246,8 @@ port, err := server.Start(root.Subtask("http", true), srv)
 - A nil server finishes the task with `server not configured` and returns port 0 and a
   `nil` error.
 - Options: `WithListener`, `WithACL`, `WithTCPWrappers`, `WithUDPWrappers`,
-  `WithLogger`, `WithProxyProtocolPolicy`, and the deprecated `WithProxyProtocolSupport`.
+  `WithLogger`, `WithProxyProtocolPolicy`, `WithDrainTimeout`, and the deprecated
+  `WithProxyProtocolSupport`.
   `WithTCPWrappers`, `WithUDPWrappers`, and `WithACL` append wrappers in option order;
   adding custom wrappers does not discard ACL enforcement.
 
