@@ -10,7 +10,76 @@ import (
 
 	"github.com/cenkalti/backoff/v7"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+func TestExplicitRefreshKeepsLastSuccess(t *testing.T) {
+	lookupErr := errors.New("unavailable")
+	value, failure := "first", lookupErr
+	state := NewFunc(func(context.Context) (string, error) { return value, failure }).BuildState()
+	_, ok := state.Peek()
+	require.False(t, ok)
+	old, current, err := state.Refresh(t.Context())
+	require.ErrorIs(t, err, lookupErr)
+	require.Empty(t, old)
+	require.Empty(t, current)
+	_, ok = state.Peek()
+	require.False(t, ok, "a failed first refresh must not publish a value")
+
+	failure = nil
+	old, current, err = state.Refresh(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, old)
+	require.Equal(t, "first", current)
+
+	value, failure = "partial", lookupErr
+	old, current, err = state.Refresh(t.Context())
+	require.ErrorIs(t, err, lookupErr)
+	require.Equal(t, "first", old)
+	require.Equal(t, old, current)
+	peek, ok := state.Peek()
+	require.True(t, ok)
+	require.Equal(t, old, peek)
+
+	value, failure = "second", nil
+	old, current, err = state.Refresh(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "first", old)
+	require.Equal(t, "second", current, "explicit refresh must bypass the default infinite TTL")
+}
+
+func TestExplicitRefreshSerializesWithoutBlockingPeek(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls, active atomic.Int32
+	state := NewFunc(func(context.Context) (int32, error) {
+		assert.Equal(t, int32(1), active.Add(1), "refresh callbacks must not overlap")
+		defer active.Add(-1)
+		call := calls.Add(1)
+		if call == 1 {
+			close(started)
+			<-release
+		}
+		return call, nil
+	}).BuildState()
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() { _, _, err := state.Refresh(t.Context()); assert.NoError(t, err) })
+	}
+	<-started
+	peeked := make(chan bool, 1)
+	go func() { _, ok := state.Peek(); peeked <- ok }()
+	select {
+	case ok := <-peeked:
+		assert.False(t, ok)
+	case <-time.After(time.Second):
+		t.Error("Peek waited for the refresh")
+	}
+	close(release)
+	wg.Wait()
+	value, ok := state.Peek()
+	require.True(t, ok)
+	require.Equal(t, int32(8), value)
+}
 
 func TestCachedFuncState_BasicCaching(t *testing.T) {
 	callCount := 0

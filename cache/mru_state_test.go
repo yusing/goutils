@@ -14,6 +14,44 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestKeyedGenerationReusesEntries(t *testing.T) {
+	var generation atomic.Uint64
+	calls := 0
+	state := newCachedContextKeyFuncState(NewKeyFunc(func(context.Context, string) (uint64, error) {
+		calls++
+		return generation.Load(), nil
+	}).WithTTL(time.Hour).WithGeneration(generation.Load))
+	for revision := range uint64(20) {
+		generation.Store(revision)
+		for range 2 {
+			value, err := state.callContext(t.Context(), "same-key")
+			require.NoError(t, err)
+			require.Equal(t, revision, value)
+		}
+	}
+	require.Equal(t, 20, calls)
+	require.Equal(t, 1, state.entries.Size(), "revisions must replace values, not retain new keys")
+}
+
+func TestKeyedGenerationChangeDuringRefresh(t *testing.T) {
+	var generation atomic.Uint64
+	calls := 0
+	cached := NewKeyFunc(func(context.Context, string) (uint64, error) {
+		calls++
+		version := generation.Load()
+		if calls == 1 {
+			generation.Add(1)
+		}
+		return version, nil
+	}).WithGeneration(generation.Load).Build()
+	for _, want := range []uint64{0, 1, 1} {
+		value, err := cached(t.Context(), "same-key")
+		require.NoError(t, err)
+		require.Equal(t, want, value)
+	}
+	require.Equal(t, 2, calls, "a generation changed during computation must invalidate that result")
+}
+
 func TestCachedContextKeyFuncState_BasicCaching(t *testing.T) {
 	callCounts := make(map[int]int)
 	fn := func(ctx context.Context, key int) (string, error) {

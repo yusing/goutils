@@ -10,9 +10,10 @@ import (
 )
 
 type cachedValue[T any] struct {
-	result   T
-	err      error
-	expireAt time.Time
+	result     T
+	err        error
+	expireAt   time.Time
+	generation uint64
 }
 
 const singleValueCacheKey = "<func>"
@@ -23,6 +24,33 @@ type CachedFuncState[T any] struct {
 	mu sync.Mutex
 
 	cached atomic.Pointer[cachedValue[T]]
+}
+
+// Peek returns the last stored result without waiting or checking its TTL.
+// ok is false until a result has been stored. Returned values must not be mutated.
+func (state *CachedFuncState[T]) Peek() (result T, ok bool) {
+	if cached := state.cached.Load(); cached != nil {
+		return cached.result, true
+	}
+	return result, false
+}
+
+// Refresh runs the function regardless of TTL, serialized with other refreshes.
+// Only a successful result replaces the cache. It returns the previous and current
+// values so callers can observe changes after publication; on error they are equal.
+// Unlike a TTL-driven call, each explicit Refresh runs the function, even when
+// another refresh just finished. Peek remains nonblocking during the refresh.
+func (state *CachedFuncState[T]) Refresh(ctx context.Context) (previous, current T, err error) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	previous, _ = state.Peek()
+	current, err = state.execute(ctx)
+	if err != nil {
+		return previous, previous, err
+	}
+	state.setResult(current, nil)
+	return previous, current, nil
 }
 
 func (state *CachedFuncState[T]) cachedExpired(cached *cachedValue[T]) bool {

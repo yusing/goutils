@@ -18,7 +18,7 @@ import "github.com/yusing/goutils/cache"
 ```
 
 - Go 1.27. The module is self-contained: it does not depend on the root
-  `github.com/yusing/goutils` module. It requires `github.com/cenkalti/backoff/v6` and
+  `github.com/yusing/goutils` module. It requires `github.com/cenkalti/backoff/v7` and
   `github.com/puzpuzpuz/xsync/v4`; zerolog is linked only with the `debug` build tag.
 - No linker flags, environment variables, or logging unless built with `-tags=debug`.
 
@@ -83,6 +83,12 @@ finishes.
   no early refresh.
 - Negative: results are always considered expired, so every call recomputes.
 
+For keyed caches, `WithGeneration(func() uint64)` also invalidates values when the
+callback's generation changes, even before TTL expiry. The next call recomputes
+the existing key instead of retaining a separate entry per revision. The callback
+must be concurrency-safe. A generation change during a refresh invalidates that
+result too, so the next call recomputes it.
+
 ### Errors are cached too
 
 A call that returns an error stores that error as the result, for the whole TTL
@@ -91,6 +97,19 @@ retries, when `fn` can fail temporarily. The exception is cancellation: when the
 context given to the refreshing call is done and the error matches
 `context.Cause(ctx)`, the result is discarded and the next call runs `fn` again. An
 error that merely looks like a timeout but is unrelated to that context is cached.
+
+### Explicit refreshes and nonblocking reads
+
+For a caller-owned refresh schedule, use `NewFunc(fn).BuildState()` instead of
+`Build()`. `state.Peek()` returns `(value, ok)` immediately, without running
+`fn` or checking TTL. Before any result has been stored, `ok` is false.
+
+`state.Refresh(ctx)` always runs `fn` (including configured retries), serializes
+lookup and publication, and returns `(previous, current, error)`. Only success
+replaces the stored value; a failure returns the previous value as both values,
+along with the refresh error. This keeps the last successful value available to
+readers during refreshes and outages. Concurrent explicit refreshes each run in
+turn, rather than sharing a result. Neither method starts a background worker.
 
 ### Single-flight refresh
 
@@ -110,7 +129,7 @@ without locking.
 `WithRetriesZeroBackoff(n)` retry a failed refresh up to `n` more times (`n = 2` means
 at most three calls). Without one of them there are no retries.
 
-- Exponential backoff uses the `backoff/v6` defaults: 500 ms initial delay with 50
+- Exponential backoff uses the `backoff/v7` defaults: 500 ms initial delay with 50
   percent jitter, growing by 1.5 each time up to 60 s, with no overall time limit. Bound
   it with a context deadline.
 - Retries stop as soon as the context is done and return `context.Cause(ctx)`.

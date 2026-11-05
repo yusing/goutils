@@ -63,6 +63,9 @@ func (state *CachedContextKeyFuncState[T, K]) checkExpired(cached *cachedValue[T
 	if cached == nil {
 		return true
 	}
+	if state.generation != nil && cached.generation != state.generation() {
+		return true
+	}
 	if state.ttl == 0 {
 		return false
 	}
@@ -187,11 +190,16 @@ func (state *CachedContextKeyFuncState[T, K]) callContext(ctx context.Context, k
 		logCacheExpiredEntry(key, cached.result, cached.err)
 	}
 
+	var generation uint64
+	if state.generation != nil {
+		generation = state.generation()
+	}
 	result, err := state.execute(ctx, key)
 	if shouldCacheResult(ctx, err) {
 		cached := &cachedValue[T]{
-			result: result,
-			err:    err,
+			result:     result,
+			err:        err,
+			generation: generation,
 		}
 		if state.ttl > 0 {
 			cached.expireAt = time.Now().Add(state.ttl)

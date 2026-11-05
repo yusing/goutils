@@ -30,6 +30,7 @@ type CachedKeyFuncBuilder[T any, K comparable] struct {
 
 	maxEntries      int
 	cleanupInterval time.Duration
+	generation      func() uint64
 
 	fn CachedContextKeyFunc[T, K]
 }
@@ -108,6 +109,14 @@ func (builder CachedKeyFuncBuilder[T, K]) WithTTL(ttl time.Duration) CachedKeyFu
 	return builder
 }
 
+// WithGeneration invalidates each cached value when generation changes. The
+// callback must be concurrency-safe. A refresh is stamped before fn runs, so a
+// change during fn also invalidates its result. Old revisions reuse the same key.
+func (builder CachedKeyFuncBuilder[T, K]) WithGeneration(generation func() uint64) CachedKeyFuncBuilder[T, K] {
+	builder.generation = generation
+	return builder
+}
+
 // WithMaxEntries configures new CachedKeyFuncBuilder instance with
 // the given maxEntries.
 func (builder CachedKeyFuncBuilder[T, K]) WithMaxEntries(maxEntries int) CachedKeyFuncBuilder[T, K] {
@@ -127,10 +136,13 @@ func (builder CachedKeyFuncBuilder[T, K]) WithCleanupInterval(cleanupInterval ti
 }
 
 func (builder CachedFuncBuilder[T]) Build() CachedContextFunc[T] {
-	state := CachedFuncState[T]{
-		CachedFuncBuilder: builder,
-	}
-	return state.callContext
+	return builder.BuildState().callContext
+}
+
+// BuildState exposes nonblocking reads and explicit refreshes for callers that
+// schedule refreshes themselves. Build and BuildState create independent caches.
+func (builder CachedFuncBuilder[T]) BuildState() *CachedFuncState[T] {
+	return &CachedFuncState[T]{CachedFuncBuilder: builder}
 }
 
 func (builder CachedKeyFuncBuilder[T, K]) Build() CachedContextKeyFunc[T, K] {
