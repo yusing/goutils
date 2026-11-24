@@ -41,6 +41,7 @@ func AppendDuration(d time.Duration, buf []byte) []byte {
 	minutes := (totalSeconds % 3600) / 60
 	seconds := totalSeconds % 60
 
+	start := len(buf)
 	idxPartBeg := 0
 	if days > 0 {
 		buf = strconv.AppendInt(buf, days, 10)
@@ -63,7 +64,7 @@ func AppendDuration(d time.Duration, buf []byte) []byte {
 	}
 	// remove last comma and space
 	buf = buf[:len(buf)-2]
-	if idxPartBeg > 0 && idxPartBeg < len(buf) {
+	if idxPartBeg > start && idxPartBeg < len(buf) {
 		// replace last part ', ' with ' and ' in-place, alloc-free
 		// ', ' is 2 bytes, ' and ' is 5 bytes, so we need to make room for 3 more bytes
 		tailLen := len(buf) - (idxPartBeg + 2)

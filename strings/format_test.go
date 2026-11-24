@@ -187,6 +187,34 @@ func TestFormatDuration(t *testing.T) {
 	}
 }
 
+func TestAppendDurationPreservesPrefix(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		prefix   string
+		duration time.Duration
+		want     string
+	}{
+		{"seconds", "elapsed: ", time.Second, "elapsed: 1 second"},
+		{"minutes", "elapsed: ", time.Minute, "elapsed: 1 minute"},
+		{"hours", "elapsed: ", time.Hour, "elapsed: 1 hour"},
+		{"negative", "elapsed: ", -time.Minute, "elapsed: -1 minute"},
+		{"unicode", "é:", time.Minute, "é:1 minute"},
+		{"short prefix", "go", time.Minute, "go1 minute"},
+		{"empty prefix", "", time.Minute, "1 minute"},
+		{"days", "elapsed: ", 24 * time.Hour, "elapsed: 1 day"},
+		{"two parts", "elapsed: ", time.Minute + time.Second, "elapsed: 1 minute and 1 second"},
+		{"three parts", "elapsed: ", 25*time.Hour + time.Minute, "elapsed: 1 day, 1 hour and 1 minute"},
+		{"negative parts", "elapsed: ", -90 * time.Second, "elapsed: -1 minute and 30 seconds"},
+		{"subsecond", "elapsed: ", 500 * time.Millisecond, "elapsed: 500 ms"},
+		{"zero", "elapsed: ", 0, "elapsed: 0 Seconds"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := string(AppendDuration(tt.duration, []byte(tt.prefix)))
+			expect.Equal(t, got, tt.want)
+		})
+	}
+}
+
 func TestFormatLastSeen(t *testing.T) {
 	now := time.Now()
 
